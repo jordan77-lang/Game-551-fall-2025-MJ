@@ -12,69 +12,68 @@
     #toolbar{position:fixed;right:12px;top:12px;display:flex;gap:8px;z-index:11}
     .btn{font:600 14px/1 system-ui;padding:.55rem .8rem;border-radius:.6rem;border:0;cursor:pointer}
     .primary{background:#0a84ff;color:#fff}
-    .ghost{background:#0006;color:#fff}
-    #err{position:fixed;left:0;right:0;bottom:0;max-height:44vh;overflow:auto;background:#100;color:#f88;font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px;display:none;white-space:pre-wrap;z-index:9999;border-top:1px solid #400}
-    #links{position:fixed;left:12px;bottom:12px;z-index:12;background:#0008;color:#fff;padding:6px 8px;border-radius:6px;font-size:12px}
-    #links a{color:#8cf;text-decoration:none;margin-right:8px}
-  </style>
-</head>
-<body>
-  <div id="tip" hidden>iOS: open in Safari. For Quick Look AR, put <code>sample.usdz</code> next to this file and serve over trusted HTTPS.</div>
-
-  <!-- iOS Quick Look button; we show it on iOS and let the OS handle file presence -->
-  <div id="toolbar">
-    <a id="ql" rel="ar" href="sample.usdz" class="btn primary" hidden>View in AR</a>
-    <script type="module">
-      import * as THREE from './lib/three.module.js';
-      import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-      const renderer = new THREE.WebGLRenderer();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      document.body.appendChild(renderer.domElement);
-      camera.position.z = 2;
-
-      // Add spinning cube
-      const geometry = new THREE.BoxGeometry();
-      const material = new THREE.MeshNormalMaterial();
-      const cube = new THREE.Mesh(geometry, material);
-      cube.position.x = -0.7;
-      scene.add(cube);
-
-      // Load GLB model
-      const loader = new GLTFLoader();
-      loader.load('./sample.glb', (gltf) => {
-        const model = gltf.scene;
-        model.position.x = 0.7;
-        scene.add(model);
-        // Center and scale model
-        const box = new THREE.Box3().setFromObject(model);
-        const size = new THREE.Vector3(); box.getSize(size);
-        const center = new THREE.Vector3(); box.getCenter(center);
-        model.position.x -= center.x;
-        model.position.y -= box.min.y;
-        model.position.z -= center.z;
-        const scale = 0.4 / Math.max(size.x, size.y, size.z || 1);
-        model.scale.setScalar(scale);
-        model.position.x += 0.7; // keep it offset from the cube
-      }, undefined, (e) => {
-        const err = document.createElement('div');
-        err.style = 'color:#fff;background:#c00;padding:10px;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;';
-        err.textContent = 'Failed to load sample.glb: ' + (e?.message || e);
-        document.body.appendChild(err);
-      });
-
-      function animate() {
-        requestAnimationFrame(animate);
-        cube.rotation.x += 0.01;
-        cube.rotation.y += 0.01;
-        renderer.render(scene, camera);
-      }
-      animate();
-      window.addEventListener('resize', ()=>{
-        camera.aspect = window.innerWidth/window.innerHeight;
-        camera.updateProjectionMatrix();
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8"/>
+      <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+      <title>Three.js Minimal Model Debug</title>
+      <style>body{margin:0;background:#222;}</style>
+    </head>
+    <body>
+      <script type="module">
+        import * as THREE from './lib/three.module.js';
+        import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
         renderer.setSize(window.innerWidth, window.innerHeight);
-      });
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 2;
+
+        // Add spinning cube
+        const geometry = new THREE.BoxGeometry();
+        const material = new THREE.MeshNormalMaterial();
+        const cube = new THREE.Mesh(geometry, material);
+        cube.position.x = -0.7;
+        scene.add(cube);
+
+        // Load GLB model
+        const loader = new GLTFLoader();
+        loader.load('./sample.glb', (gltf) => {
+          const model = gltf.scene;
+          model.position.x = 0.7;
+          scene.add(model);
+          // Center and scale model
+          const box = new THREE.Box3().setFromObject(model);
+          const size = new THREE.Vector3(); box.getSize(size);
+          const center = new THREE.Vector3(); box.getCenter(center);
+          model.position.x -= center.x;
+          model.position.y -= box.min.y;
+          model.position.z -= center.z;
+          const scale = 0.4 / Math.max(size.x, size.y, size.z || 1);
+          model.scale.setScalar(scale);
+          model.position.x += 0.7; // keep it offset from the cube
+        }, undefined, (e) => {
+          const err = document.createElement('div');
+          err.style = 'color:#fff;background:#c00;padding:10px;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;';
+          err.textContent = 'Failed to load sample.glb: ' + (e?.message || e);
+          document.body.appendChild(err);
+        });
+
+        function animate() {
+          requestAnimationFrame(animate);
+          cube.rotation.x += 0.01;
+          cube.rotation.y += 0.01;
+          renderer.render(scene, camera);
+        }
+        animate();
+        window.addEventListener('resize', ()=>{
+          camera.aspect = window.innerWidth/window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      </script>
+    </body>
+    </html>
     </script>
-    const resetBtn = document.getElementById('reset');
