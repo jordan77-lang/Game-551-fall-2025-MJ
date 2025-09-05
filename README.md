@@ -2,4 +2,4 @@
 Mark Jordan 
 Jordan77
 
-https://jordan77-lang.github.io/Game-551-fall-2025/
+https://jordan77-lang.github.io/Game-551-fall-2025-MJ/
