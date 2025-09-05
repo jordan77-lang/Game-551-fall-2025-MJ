@@ -3,121 +3,143 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Digital Twin — iOS Viewer</title>
+  <title>Digital Twin — Three.js + iOS Quick Look</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>">
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
-    #msg{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#222;color:#fff;padding:6px 12px;border-radius:6px;z-index:10}
-    #hint{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);background:#fff3;color:#111;padding:8px 14px;border-radius:6px;z-index:10}
-    #arButtonWrap{position:fixed;right:12px;top:12px;z-index:10}
-    #reset{position:fixed;right:12px;bottom:12px;z-index:10}
-    button{font:600 14px/1 system-ui;padding:.5rem .7rem;border-radius:.6rem;border:0;cursor:pointer}
-    #ios-instructions{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:#fff3;color:#111;padding:10px 18px;border-radius:8px;z-index:20;max-width:90vw;}
+    #msg{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#222;color:#fff;padding:6px 12px;border-radius:6px;z-index:10;max-width:92vw}
+    #tip{position:fixed;left:50%;top:48px;transform:translateX(-50%);background:#fff3;color:#111;padding:8px 14px;border-radius:8px;z-index:10;max-width:92vw}
+    #toolbar{position:fixed;right:12px;top:12px;display:flex;gap:8px;z-index:11}
+    .btn{font:600 14px/1 system-ui;padding:.55rem .8rem;border-radius:.6rem;border:0;cursor:pointer}
+    .primary{background:#0a84ff;color:#fff}
+    .ghost{background:#0006;color:#fff}
+    #err{position:fixed;left:0;right:0;bottom:0;max-height:44vh;overflow:auto;background:#100;color:#f88;font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px;display:none;white-space:pre-wrap;z-index:9999;border-top:1px solid #400}
   </style>
 </head>
 <body>
   <div id="msg" role="status" aria-live="polite">Booting…</div>
-  <div id="arButtonWrap" hidden><button id="arBtn">Enter AR</button></div>
-  <div id="hint" hidden>Move to find a surface. Tap to place.</div>
-  <button id="reset" hidden>Reset</button>
-  <div id="ios-instructions">
-    <strong>iOS Instructions:</strong><br>
-    For best results, open this page in <b>Safari</b> on your iPhone or iPad.<br>
-    If you see a camera permission prompt, allow access.<br>
-    <br>
-    <em>Note:</em> WebXR support on iOS is experimental. If AR does not work, try updating iOS or use desktop mode for 3D viewing.
+  <div id="tip" hidden>On iOS Safari you’ll see a “View in AR” button if <code>sample.usdz</code> is present and served from this origin over HTTPS.</div>
+
+  <!-- iOS Quick Look button (shown only if on iOS AND usdz exists) -->
+  <div id="toolbar">
+    <!-- Apple Quick Look just needs <a rel="ar" href="*.usdz"> -->
+    <a id="ql" rel="ar" href="sample.usdz" class="btn primary" hidden>View in AR</a>
+    <button id="reset" class="btn ghost" hidden>Reset</button>
   </div>
-  <script type="importmap">
-    { "imports": { "three": "./lib/three.module.js" } }
-  </script>
+
+  <div id="err"></div>
+
   <script type="module">
-    import * as THREE from 'three';
+    // RELATIVE imports (iOS-safe; no import map needed)
+    import * as THREE from './lib/three.module.js';
     import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
     import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
     import { RoomEnvironment } from './lib/examples/jsm/environments/RoomEnvironment.js';
 
-    // --- UI helpers ---
+    // --- Minimal UI helpers ---
     const msg = document.getElementById('msg');
-    const say  = (t,p=false)=>{ msg.textContent=t; if(!p) setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; }, 2500); };
-    const hint = document.getElementById('hint');
-    const arBtnWrap = document.getElementById('arButtonWrap');
-    const arBtn = document.getElementById('arBtn');
+    const tip = document.getElementById('tip');
+    const qlBtn = document.getElementById('ql');
     const resetBtn = document.getElementById('reset');
+    const errBox = document.getElementById('err');
+    const say = (t,p=false)=>{ msg.textContent=t; if(!p){ setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; }, 2500); } };
+    const showErr = (e)=>{ errBox.style.display='block'; errBox.textContent += (e?.message||e?.reason||e)+'\n'; };
 
-    const onHttps = location.protocol==='https:' || location.hostname==='localhost';
-    if (!onHttps) say('Use HTTPS or localhost or the camera will be blocked.', true);
+    // Surface errors on-screen (helps when iOS gives you a blank page)
+    window.addEventListener('error', (e)=>showErr(e.error||e.message));
+    window.addEventListener('unhandledrejection', (e)=>showErr(e.reason||'Unhandled promise rejection'));
 
-    // Warn for in-app browsers (WebViews like Grok/IG)
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('; wv;') || ua.includes('grok') || ua.includes('instagram') || ua.includes('fbav') || ua.includes('tiktok')) {
-      say('Open in Chrome or Safari. In-app browsers break WebXR.', true);
-    }
+    // Detect iOS (includes iPad “Mac” user agents with touch)
+    const ua = navigator.userAgent;
+    const isiOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (isiOS) tip.hidden = false;
 
-    // --- Renderer + scene (desktop defaults) ---
+    // --- Three.js scene ---
     const scene = new THREE.Scene();
+
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace; else renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
+    renderer.toneMappingExposure = 1.2;
     renderer.physicallyCorrectLights = true;
     renderer.setClearAlpha(0);
-    document.body.appendChild(renderer.domElement);
-
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
 
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envTex = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
-    scene.environment = envTex;
+    // IBL (fallback safely on old Safari)
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const envTex = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+      scene.environment = envTex;
+    } catch(e) { showErr('IBL disabled: '+e); }
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x333355, 1.0);
-    const dir  = new THREE.DirectionalLight(0xffffff, 2.2);
-    dir.position.set(1,2,1);
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
+    const dir  = new THREE.DirectionalLight(0xffffff, 1.8);
+    dir.position.set(1.5,2.5,1.0);
     dir.castShadow = true;
     dir.shadow.mapSize.set(512,512);
     dir.shadow.camera.near = 0.01;
-    dir.shadow.camera.far  = 10;
+    dir.shadow.camera.far  = 20;
     dir.shadow.normalBias  = 0.02;
-    const amb  = new THREE.AmbientLight(0xffffff, 0.18);
-    scene.add(hemi, dir, amb);
+    scene.add(hemi, dir, new THREE.AmbientLight(0xffffff, 0.15));
 
+    // Ground (shadow receiver)
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(10,10),
-      new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.85 })
+      new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 })
     );
     ground.rotation.x = -Math.PI/2;
     ground.position.y = -0.001;
     ground.receiveShadow = true;
-    ground.visible = false;
     scene.add(ground);
 
-    const reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.12,0.14,48,1),
-      new THREE.MeshBasicMaterial({ color:0x00ff88, toneMapped:false })
-    );
-    reticle.rotation.x = -Math.PI/2;
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-    scene.add(reticle);
+    // Camera + controls
+    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 100);
+    camera.position.set(0.9, 0.7, 1.2);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 0.2;
+    controls.maxDistance = 6;
+    controls.maxPolarAngle = Math.PI*0.49;
 
-    let camera = null, controls = null;
-    let srcModel = null;
-    new GLTFLoader().load('./sample.glb', gltf=>{
-      srcModel = gltf.scene;
-      srcModel.traverse(o=>{
+    // Load GLB
+    let root = null;
+    const loader = new GLTFLoader();
+    loader.load('./sample.glb', (gltf)=>{
+      root = gltf.scene;
+      root.traverse(o=>{
         if (o.isMesh){
           o.castShadow = true;
           o.receiveShadow = false;
           if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 1.2;
         }
       });
+      centerBaseAndScale(root, 0.4);
+      scene.add(root);
       say('Model loaded.');
-      if (camera) addDesktopModel();
-    }, undefined, err=>{ console.error(err); say('Failed to load ./sample.glb', true); });
+      frameCameraTo(root);
+      resetBtn.hidden = false;
+    }, undefined, (e)=>{
+      console.error(e); showErr('Could not load ./sample.glb — check path and case.'); say('Load error. See log below.', true);
+    });
 
-    const TARGET_SIZE_M = 0.4;
+    // Reset: remove model and reload it (quick sanity button)
+    resetBtn.addEventListener('click', ()=>{
+      if (root){ scene.remove(root); root = null; }
+      loader.load('./sample.glb', (gltf)=>{
+        root = gltf.scene;
+        root.traverse(o=>{ if (o.isMesh){ o.castShadow=true; o.receiveShadow=false; }});
+        centerBaseAndScale(root, 0.4);
+        scene.add(root);
+        frameCameraTo(root);
+      });
+    });
+
     function centerBaseAndScale(object, targetMeters){
       const box = new THREE.Box3().setFromObject(object);
       const size = new THREE.Vector3(); box.getSize(size);
@@ -130,86 +152,57 @@
       const box2 = new THREE.Box3().setFromObject(object);
       object.position.y -= box2.min.y;
     }
-
-    function addDesktopModel(){
-      const root = srcModel.clone(true);
-      centerBaseAndScale(root, TARGET_SIZE_M);
-      scene.add(root);
-      ground.visible = true;
-      const nd = TARGET_SIZE_M;
-      const dist = nd*0.6/Math.tan((60*Math.PI)/360);
-      camera.position.set(dist, dist*0.5, dist);
-      camera.near = Math.max(0.01, nd*0.001);
-      camera.far = dist*10;
+    function frameCameraTo(object){
+      const box = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const radius = size.length() * 0.5;
+      const dist = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+      const target = new THREE.Vector3(); box.getCenter(target);
+      controls.target.copy(target);
+      camera.position.copy(target).add(new THREE.Vector3(dist, dist*0.3, dist));
+      camera.near = Math.max(0.01, radius * 0.01);
+      camera.far  = Math.max(20,  dist * 10);
       camera.updateProjectionMatrix();
+      controls.update();
     }
 
-    const AR_MATERIAL = 'basic';
-    function cloneForAR(src){
-      const root = src.clone(true);
-      root.traverse(o=>{
-        if (!o.isMesh || !o.material) return;
-        o.castShadow = true;
-        o.receiveShadow = false;
-        if (AR_MATERIAL === 'lambert'){
-          const mat = new THREE.MeshLambertMaterial({
-            color: (o.material.color && o.material.color.isColor) ? o.material.color.clone() : new THREE.Color(0xffffff),
-            map: o.material.map || null,
-            emissive: (o.material.emissive && o.material.emissive.isColor) ? o.material.emissive.clone() : new THREE.Color(0x101010),
-            emissiveMap: o.material.emissiveMap || null,
-            side: o.material.side
-          });
-          if (mat.map && 'colorSpace' in mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
-          if (mat.emissiveMap && 'colorSpace' in mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-          o.material = mat;
-        } else {
-          const mat = new THREE.MeshBasicMaterial({
-            color: (o.material.color && o.material.color.isColor) ? o.material.color.clone() : new THREE.Color(0xffffff),
-            map: o.material.map || null,
-            toneMapped:false
-          });
-          if (mat.map && 'colorSpace' in mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
-          o.material = mat;
-        }
-      });
-      return root;
-    }
+    // Render loop
+    (function loop(){
+      requestAnimationFrame(loop);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
 
-    function makeARShadowCatcher(size=2){
-      const catcher = new THREE.Mesh(
-        new THREE.PlaneGeometry(size, size),
-        new THREE.ShadowMaterial({ opacity: 0.35 })
-      );
-      catcher.rotation.x = -Math.PI/2;
-      catcher.receiveShadow = true;
-      catcher.position.y = -0.001;
-      return catcher;
-    }
-
-    function startFallbackViewer(){
-      if (camera) return;
-      camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 1000);
-      camera.position.set(0.8,0.6,1.2);
-      controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true; controls.dampingFactor = 0.08;
-      controls.minDistance = 0.2; controls.maxDistance = 5; controls.maxPolarAngle = Math.PI*0.49;
-      if (srcModel) addDesktopModel();
-      (function loop(){
-        requestAnimationFrame(loop);
-        controls.update();
-        renderer.render(scene,camera);
-      })();
-    }
-
-    // --- Always use fallback on iOS (WebXR is experimental) ---
-    startFallbackViewer();
-
-    // --- Resize ---
+    // Resize
     addEventListener('resize', ()=>{
       renderer.setSize(innerWidth, innerHeight);
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      if (camera){ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
     });
+
+    // ------------------------------
+    // iOS Quick Look: show button only if:
+    // - We’re on iOS
+    // - sample.usdz exists (HEAD 200)
+    // - We’re on HTTPS (Quick Look usually rejects self-signed HTTPs; trusted HTTPS is safest)
+    // ------------------------------
+    (async function setupQuickLook(){
+      if (!isiOS) return; // button is iOS-only
+      try {
+        const res = await fetch('sample.usdz', { method:'HEAD', cache:'no-store' });
+        const onHttps = location.protocol === 'https:' || location.hostname === 'localhost';
+        if (res.ok && onHttps){
+          qlBtn.hidden = false; // <a rel="ar" href="sample.usdz"> will launch Quick Look
+          say('Tap “View in AR” to open Quick Look.', true);
+        } else {
+          if (!res.ok) showErr('sample.usdz not found (HEAD '+res.status+'). Hide Quick Look button.');
+          if (!onHttps) showErr('Quick Look prefers HTTPS. Serve over trusted HTTPS for best results.');
+        }
+      } catch (e) {
+        showErr('Quick Look setup failed: '+e);
+      }
+    })();
   </script>
 </body>
 </html>
