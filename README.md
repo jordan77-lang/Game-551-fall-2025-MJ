@@ -6,4 +6,4 @@ https://jordan77-lang.github.io/Game-551-fall-2025-MJ/
 
 Scan the QR code below to go to the mobile site:
 
-![QR Code](docs/qcode.png)
+<img src="docs/qcode.png" alt="QR Code" width="200"/>
