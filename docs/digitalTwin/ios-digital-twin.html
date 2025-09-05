@@ -25,111 +25,29 @@
   <!-- iOS Quick Look button; we show it on iOS and let the OS handle file presence -->
   <div id="toolbar">
     <a id="ql" rel="ar" href="sample.usdz" class="btn primary" hidden>View in AR</a>
-    <button id="reset" class="btn ghost" hidden>Reset</button>
-  </div>
-
-  <!-- quick links to verify your files actually load -->
-  <div id="links">
-    check: <a href="./lib/three.module.js">three</a>
-    <a href="./lib/examples/jsm/loaders/GLTFLoader.js">GLTFLoader</a>
-    <a href="./lib/examples/jsm/controls/OrbitControls.js">OrbitControls</a>
-    <a href="./sample.glb">sample.glb</a>
-    <a href="./sample.usdz">sample.usdz</a>
-  </div>
-
-  <div id="err"></div>
-
-  <script type="module">
-    // RELATIVE imports only (import maps + RoomEnvironment cause iOS pain)
-    import * as THREE from './lib/three.module.js';
-    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
-    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
-
-    // Error overlay so “Booting…” doesn’t hide failures
-    const msg = document.getElementById('msg');
-    const errBox = document.getElementById('err');
-    const tip = document.getElementById('tip');
-    const qlBtn = document.getElementById('ql');
+    <script type="module">
+      import * as THREE from './lib/three.module.js';
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+      const geometry = new THREE.BoxGeometry();
+      const material = new THREE.MeshNormalMaterial();
+      const cube = new THREE.Mesh(geometry, material);
+      scene.add(cube);
+      camera.position.z = 2;
+      function animate() {
+        requestAnimationFrame(animate);
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      }
+      animate();
+      window.addEventListener('resize', ()=>{
+        camera.aspect = window.innerWidth/window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
     const resetBtn = document.getElementById('reset');
-    const say = (t,p=false)=>{ msg.textContent=t; if(!p){ setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; }, 2500); } };
-    const showErr = (e)=>{ errBox.style.display='block'; errBox.textContent += (e?.message||e?.reason||e)+'\n'; };
-    window.addEventListener('error', (e)=>showErr(e.error||e.message));
-    window.addEventListener('unhandledrejection', (e)=>showErr(e.reason||'Unhandled promise rejection'));
-
-    // Detect iOS (includes iPad “Mac” UA with touch)
-    const ua = navigator.userAgent;
-    const isiOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    if (isiOS) { tip.hidden = false; qlBtn.hidden = false; }
-
-    // Scene
-    const scene = new THREE.Scene();
-
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.setSize(innerWidth, innerHeight);
-    if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace; else renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
-    renderer.physicallyCorrectLights = true;
-    renderer.setClearAlpha(0);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    document.body.appendChild(renderer.domElement);
-
-    // Lights (simple, stable)
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
-    const dir  = new THREE.DirectionalLight(0xffffff, 1.8);
-    dir.position.set(1.5,2.5,1.0);
-    dir.castShadow = true;
-    dir.shadow.mapSize.set(512,512);
-    dir.shadow.camera.near = 0.01;
-    dir.shadow.camera.far  = 20;
-    dir.shadow.normalBias  = 0.02;
-    scene.add(hemi, dir, new THREE.AmbientLight(0xffffff, 0.15));
-
-    // Ground
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(10,10),
-      new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 })
-    );
-    ground.rotation.x = -Math.PI/2;
-    ground.position.y = -0.001;
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    // Camera + controls
-    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 100);
-    camera.position.set(0.9, 0.7, 1.2);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.minDistance = 0.2;
-    controls.maxDistance = 6;
-    controls.maxPolarAngle = Math.PI*0.49;
-
-
-  // TEMP: Add a spinning cube instead of loading the GLB model
-  const geometry = new THREE.BoxGeometry();
-  const material = new THREE.MeshNormalMaterial();
-  const cube = new THREE.Mesh(geometry, material);
-  scene.add(cube);
-  camera.position.z = 2;
-
-    // Render loop
-    (function loop(){
-      requestAnimationFrame(loop);
-      controls.update();
-      renderer.render(scene, camera);
-    })();
-
-    // Resize
-    addEventListener('resize', ()=>{
-      renderer.setSize(innerWidth, innerHeight);
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      camera.aspect = innerWidth/innerHeight;
-      camera.updateProjectionMatrix();
-    });
-  </script>
-</body>
-</html>
