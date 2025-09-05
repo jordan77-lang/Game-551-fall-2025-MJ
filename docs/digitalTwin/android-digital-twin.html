@@ -39,7 +39,7 @@
   <script type="module">
     // If script fails to run in 5 seconds, show a fatal error message
     setTimeout(()=>{
-      if (!window.THREE || !document.body.querySelector('canvas')) {
+      if (!document.body.querySelector('canvas')) {
         const fatal = document.getElementById('fatal-error');
         fatal.textContent = 'Error: The 3D viewer failed to load. This may be due to missing files, unsupported browser, or a script error.';
         fatal.style.display = 'block';
