@@ -37,13 +37,13 @@
       gltf.scene.position.set(0, 0, -5);
     });
 
-    // Lighting
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 4); // Brighter directional light
-    directionalLight.position.set(0, 2, 2).normalize();
-    scene.add(directionalLight);
+  // Lighting
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 8); // Even brighter directional light
+  directionalLight.position.set(0, 4, 4).normalize();
+  scene.add(directionalLight);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Add ambient light for softer shadows
-    scene.add(ambientLight);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.5); // Stronger ambient light
+  scene.add(ambientLight);
 
     // Animate
     function animate() {
