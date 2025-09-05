@@ -23,7 +23,6 @@
     <body>
       <script type="module">
         import * as THREE from './lib/three.module.js';
-        import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer();
@@ -31,35 +30,11 @@
         document.body.appendChild(renderer.domElement);
         camera.position.z = 2;
 
-        // Add spinning cube
+        // Add spinning cube only
         const geometry = new THREE.BoxGeometry();
         const material = new THREE.MeshNormalMaterial();
         const cube = new THREE.Mesh(geometry, material);
-        cube.position.x = -0.7;
         scene.add(cube);
-
-        // Load GLB model
-        const loader = new GLTFLoader();
-        loader.load('./sample.glb', (gltf) => {
-          const model = gltf.scene;
-          model.position.x = 0.7;
-          scene.add(model);
-          // Center and scale model
-          const box = new THREE.Box3().setFromObject(model);
-          const size = new THREE.Vector3(); box.getSize(size);
-          const center = new THREE.Vector3(); box.getCenter(center);
-          model.position.x -= center.x;
-          model.position.y -= box.min.y;
-          model.position.z -= center.z;
-          const scale = 0.4 / Math.max(size.x, size.y, size.z || 1);
-          model.scale.setScalar(scale);
-          model.position.x += 0.7; // keep it offset from the cube
-        }, undefined, (e) => {
-          const err = document.createElement('div');
-          err.style = 'color:#fff;background:#c00;padding:10px;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;';
-          err.textContent = 'Failed to load sample.glb: ' + (e?.message || e);
-          document.body.appendChild(err);
-        });
 
         function animate() {
           requestAnimationFrame(animate);
