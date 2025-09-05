@@ -7,49 +7,36 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>">
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
-    #msg{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#222;color:#fff;padding:6px 12px;border-radius:6px;z-index:10;max-width:92vw}
-    #tip{position:fixed;left:50%;top:48px;transform:translateX(-50%);background:#fff3;color:#111;padding:8px 14px;border-radius:8px;z-index:10;max-width:92vw}
-    #toolbar{position:fixed;right:12px;top:12px;display:flex;gap:8px;z-index:11}
-    .btn{font:600 14px/1 system-ui;padding:.55rem .8rem;border-radius:.6rem;border:0;cursor:pointer}
-    .primary{background:#0a84ff;color:#fff}
-    <!doctype html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8"/>
-      <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-      <title>Three.js Minimal Model Debug</title>
-      <style>body{margin:0;background:#222;}</style>
-    </head>
-    <body>
-      <script type="module">
-      import * as THREE from './lib/three.module.js';
-      import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-        camera.position.z = 2;
-
-        // Add spinning cube only
-        const geometry = new THREE.BoxGeometry();
-        const material = new THREE.MeshNormalMaterial();
-        const cube = new THREE.Mesh(geometry, material);
-        scene.add(cube);
-
-        function animate() {
-          requestAnimationFrame(animate);
-          cube.rotation.x += 0.01;
-          cube.rotation.y += 0.01;
-          renderer.render(scene, camera);
-        }
-        animate();
-        window.addEventListener('resize', ()=>{
-          camera.aspect = window.innerWidth/window.innerHeight;
-          camera.updateProjectionMatrix();
-          renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-      </script>
-    </body>
-    </html>
-    </script>
+  </style>
+</head>
+<body>
+  <div id="msg" style="color:#fff;text-align:center;margin-top:20px;">If you see a spinning cube, Three.js works!</div>
+  <script type="module">
+    import * as THREE from './lib/three.module.js';
+    // import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js'; // Uncomment if you need model loading
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    camera.position.z = 2;
+    // Add spinning cube only
+    const geometry = new THREE.BoxGeometry();
+    const material = new THREE.MeshNormalMaterial();
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+    function animate() {
+      requestAnimationFrame(animate);
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.01;
+      renderer.render(scene, camera);
+    }
+    animate();
+    window.addEventListener('resize', ()=>{
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
