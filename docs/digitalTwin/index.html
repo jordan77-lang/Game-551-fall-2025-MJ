@@ -28,7 +28,23 @@
   <div id="hint" hidden>Move to find a surface. Tap to place.</div>
   <button id="reset" hidden>Reset</button>
 
+  <noscript>
+    <div style="background:#c00;color:#fff;padding:18px 12px;font-size:1.2em;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;">
+      JavaScript is disabled or failed to load. This page requires JavaScript to display the 3D model.
+    </div>
+  </noscript>
+
+  <div id="fatal-error" style="display:none;background:#c00;color:#fff;padding:18px 12px;font-size:1.2em;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;"></div>
+
   <script type="module">
+    // If script fails to run in 5 seconds, show a fatal error message
+    setTimeout(()=>{
+      if (!window.THREE || !document.body.querySelector('canvas')) {
+        const fatal = document.getElementById('fatal-error');
+        fatal.textContent = 'Error: The 3D viewer failed to load. This may be due to missing files, unsupported browser, or a script error.';
+        fatal.style.display = 'block';
+      }
+    }, 5000);
     import * as THREE from 'three';
     import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
     import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
