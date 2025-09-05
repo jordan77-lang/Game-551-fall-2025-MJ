@@ -28,7 +28,7 @@
   </div>
 
 
-  <div id="err"></div>
+  <div id="err" style="display:block;"></div>
   <noscript>
     <div style="background:#c00;color:#fff;padding:18px 12px;font-size:1.2em;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;">
       JavaScript is disabled or failed to load. This page requires JavaScript to display the 3D model.
@@ -59,7 +59,7 @@
     const resetBtn = document.getElementById('reset');
     const errBox = document.getElementById('err');
     const say = (t,p=false)=>{ msg.textContent=t; if(!p){ setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; }, 2500); } };
-    const showErr = (e)=>{ errBox.style.display='block'; errBox.textContent += (e?.message||e?.reason||e)+'\n'; };
+  const showErr = (e)=>{ errBox.style.display='block'; errBox.textContent += 'ERROR: ' + (e?.message||e?.reason||e)+'\n'; };
 
     // Surface errors on-screen (helps when iOS gives you a blank page)
     window.addEventListener('error', (e)=>showErr(e.error||e.message));
@@ -141,7 +141,8 @@
       frameCameraTo(root);
       resetBtn.hidden = false;
     }, undefined, (e)=>{
-      console.error(e); showErr('Could not load ./sample.glb — check path and case.'); say('Load error. See log below.', true);
+      showErr('Could not load ./sample.glb — check that the file exists, is spelled exactly, and is accessible.');
+      say('Load error. See log below.', true);
     });
 
     // Reset: remove model and reload it (quick sanity button)
