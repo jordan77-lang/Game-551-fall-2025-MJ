@@ -108,64 +108,13 @@
     controls.maxDistance = 6;
     controls.maxPolarAngle = Math.PI*0.49;
 
-    // Load GLB (no IBL, no extras)
-    let root = null;
-    const loader = new GLTFLoader();
-    loader.load('./sample.glb', (gltf)=>{
-      root = gltf.scene;
-      root.traverse(o=>{
-        if (o.isMesh){
-          o.castShadow = true;
-          o.receiveShadow = false;
-        }
-      });
-      centerBaseAndScale(root, 0.4);
-      scene.add(root);
-      say('Model loaded.');
-      frameCameraTo(root);
-      resetBtn.hidden = false;
-    }, undefined, (e)=>{
-      console.error(e);
-      showErr('Could not load ./sample.glb — check path and exact filenames.');
-      say('Load error. See log below.', true);
-    });
 
-    resetBtn.addEventListener('click', ()=>{
-      if (root){ scene.remove(root); root = null; }
-      loader.load('./sample.glb', (gltf)=>{
-        root = gltf.scene;
-        root.traverse(o=>{ if (o.isMesh){ o.castShadow=true; o.receiveShadow=false; }});
-        centerBaseAndScale(root, 0.4);
-        scene.add(root);
-        frameCameraTo(root);
-      });
-    });
-
-    function centerBaseAndScale(object, targetMeters){
-      const box = new THREE.Box3().setFromObject(object);
-      const size = new THREE.Vector3(); box.getSize(size);
-      const center = new THREE.Vector3(); box.getCenter(center);
-      object.position.x -= center.x;
-      object.position.z -= center.z;
-      object.position.y -= box.min.y;
-      const s = targetMeters / Math.max(size.x, size.y, size.z || 1);
-      object.scale.setScalar(s);
-      const box2 = new THREE.Box3().setFromObject(object);
-      object.position.y -= box2.min.y;
-    }
-    function frameCameraTo(object){
-      const box = new THREE.Box3().setFromObject(object);
-      const size = new THREE.Vector3(); box.getSize(size);
-      const radius = size.length() * 0.5;
-      const dist = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
-      const target = new THREE.Vector3(); box.getCenter(target);
-      controls.target.copy(target);
-      camera.position.copy(target).add(new THREE.Vector3(dist, dist*0.3, dist));
-      camera.near = Math.max(0.01, radius * 0.01);
-      camera.far  = Math.max(20,  dist * 10);
-      camera.updateProjectionMatrix();
-      controls.update();
-    }
+  // TEMP: Add a spinning cube instead of loading the GLB model
+  const geometry = new THREE.BoxGeometry();
+  const material = new THREE.MeshNormalMaterial();
+  const cube = new THREE.Mesh(geometry, material);
+  scene.add(cube);
+  camera.position.z = 2;
 
     // Render loop
     (function loop(){
