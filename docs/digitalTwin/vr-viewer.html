@@ -33,7 +33,7 @@
     const loader = new GLTFLoader();
     loader.load('./sample.glb', (gltf) => {
       scene.add(gltf.scene);
-      gltf.scene.scale.set(1, 1, 1);
+      gltf.scene.scale.set(2, 2, 2);
       gltf.scene.position.set(0, 0, -1);
     });
 
