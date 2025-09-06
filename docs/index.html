@@ -31,7 +31,16 @@
             <p>Scan this QR code for mobile site:</p>
             <img src="./qrcode.png" alt="QR Code" style="max-width:200px; width:100%; border:1px solid #ccc; border-radius:8px;" />
         </div>
-        <p style="margin-top:40px; color:#888; font-size:0.9em;">Powered by GitHub Pages</p>
+                <p style="margin-top:40px; color:#888; font-size:0.9em;">Powered by GitHub Pages</p>
+                <div id="update-info" style="color:#888; font-size:0.9em; margin-top:10px; text-align:center;"></div>
+                <script>
+                    // Show the last updated time using the document's last modified property
+                    const updateDiv = document.getElementById('update-info');
+                    if (updateDiv) {
+                        const dt = new Date(document.lastModified);
+                        updateDiv.textContent = 'Last updated: ' + dt.toLocaleString();
+                    }
+                </script>
     </div>
 </body>
 </html>
