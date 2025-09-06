@@ -221,83 +221,122 @@
       };
       if (navigator.xr && renderer.xr.enabled) {
         renderer.setAnimationLoop((time, frame) => {
-          controls.update();
-          renderer.render(scene, camera);
-          const session = renderer.xr.getSession();
-          if (!session || !model) return;
-          const meshes = [];
-          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
-          // Remove old hand meshes
-          for (const mesh of handMeshes) scene.remove(mesh);
-          handMeshes.length = 0;
-          for (const inputSource of session.inputSources) {
-            if (inputSource.hand) {
-              for (const jointName of jointNames) {
-                const joint = inputSource.hand.get(jointName);
-                if (joint && joint.transform && joint.transform.position) {
-                  // Pick color by finger
-                  let color = 0xffffff;
-                  if (jointName.startsWith('thumb')) color = jointColors.thumb;
-                  else if (jointName.startsWith('index')) color = jointColors.index;
-                  else if (jointName.startsWith('middle')) color = jointColors.middle;
-                  else if (jointName.startsWith('ring')) color = jointColors.ring;
-                  else if (jointName.startsWith('pinky')) color = jointColors.pinky;
-                  else if (jointName === 'wrist') color = jointColors.wrist;
-                  const mesh = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.012, 12, 12),
-                    new THREE.MeshBasicMaterial({ color })
-                  );
-                  mesh.position.set(
-                    joint.transform.position.x,
-                    joint.transform.position.y,
-                    joint.transform.position.z
-                  );
-                  scene.add(mesh);
-                  handMeshes.push(mesh);
-                }
-              }
-              // Pinch detection and sound (same as before)
-              const thumbTip = inputSource.hand.get('thumb-tip');
-              const indexTip = inputSource.hand.get('index-finger-tip');
-              if (thumbTip && indexTip && thumbTip.transform && indexTip.transform) {
-                const thumbPos = new THREE.Vector3().set(
-                  thumbTip.transform.position.x,
-                  thumbTip.transform.position.y,
-                  thumbTip.transform.position.z
-                );
-                const indexPos = new THREE.Vector3().set(
-                  indexTip.transform.position.x,
-                  indexTip.transform.position.y,
-                  indexTip.transform.position.z
-                );
-                const pinchDist = thumbPos.distanceTo(indexPos);
-                if (pinchDist < 0.025) {
-                  // Raycast from index tip forward
-                  const direction = new THREE.Vector3(0, 0, -1);
-                  if (indexTip.transform.orientation) {
-                    const quat = new THREE.Quaternion(
-                      indexTip.transform.orientation.x,
-                      indexTip.transform.orientation.y,
-                      indexTip.transform.orientation.z,
-                      indexTip.transform.orientation.w
-                    );
-                    direction.applyQuaternion(quat);
+          try {
+            controls.update();
+            renderer.render(scene, camera);
+            const session = renderer.xr.getSession();
+            if (!session || !model) return;
+            const meshes = [];
+            model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+            // Remove old hand meshes
+            for (const mesh of handMeshes) scene.remove(mesh);
+            handMeshes.length = 0;
+            for (const inputSource of session.inputSources) {
+              if (inputSource.hand) {
+                for (const jointName of jointNames) {
+                  let joint;
+                  try {
+                    joint = inputSource.hand.get(jointName);
+                  } catch (e) {
+                    joint = null;
                   }
-                  raycaster.ray.origin.copy(indexPos);
-                  raycaster.ray.direction.copy(direction);
-                  const intersects = raycaster.intersectObjects(meshes, true);
-                  if (intersects.length > 0) {
-                    if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
-                      if (robotSound.context && robotSound.context.state === 'suspended') {
-                        robotSound.context.resume();
+                  if (
+                    joint &&
+                    joint.transform &&
+                    joint.transform.position &&
+                    typeof joint.transform.position.x === 'number' &&
+                    typeof joint.transform.position.y === 'number' &&
+                    typeof joint.transform.position.z === 'number'
+                  ) {
+                    // Pick color by finger
+                    let color = 0xffffff;
+                    if (jointName.startsWith('thumb')) color = jointColors.thumb;
+                    else if (jointName.startsWith('index')) color = jointColors.index;
+                    else if (jointName.startsWith('middle')) color = jointColors.middle;
+                    else if (jointName.startsWith('ring')) color = jointColors.ring;
+                    else if (jointName.startsWith('pinky')) color = jointColors.pinky;
+                    else if (jointName === 'wrist') color = jointColors.wrist;
+                    const mesh = new THREE.Mesh(
+                      new THREE.SphereGeometry(0.012, 12, 12),
+                      new THREE.MeshBasicMaterial({ color })
+                    );
+                    mesh.position.set(
+                      joint.transform.position.x,
+                      joint.transform.position.y,
+                      joint.transform.position.z
+                    );
+                    scene.add(mesh);
+                    handMeshes.push(mesh);
+                  }
+                }
+                // Pinch detection and sound (same as before)
+                let thumbTip, indexTip;
+                try {
+                  thumbTip = inputSource.hand.get('thumb-tip');
+                  indexTip = inputSource.hand.get('index-finger-tip');
+                } catch (e) {
+                  thumbTip = null; indexTip = null;
+                }
+                if (
+                  thumbTip && indexTip &&
+                  thumbTip.transform && indexTip.transform &&
+                  thumbTip.transform.position && indexTip.transform.position &&
+                  typeof thumbTip.transform.position.x === 'number' &&
+                  typeof thumbTip.transform.position.y === 'number' &&
+                  typeof thumbTip.transform.position.z === 'number' &&
+                  typeof indexTip.transform.position.x === 'number' &&
+                  typeof indexTip.transform.position.y === 'number' &&
+                  typeof indexTip.transform.position.z === 'number'
+                ) {
+                  const thumbPos = new THREE.Vector3().set(
+                    thumbTip.transform.position.x,
+                    thumbTip.transform.position.y,
+                    thumbTip.transform.position.z
+                  );
+                  const indexPos = new THREE.Vector3().set(
+                    indexTip.transform.position.x,
+                    indexTip.transform.position.y,
+                    indexTip.transform.position.z
+                  );
+                  const pinchDist = thumbPos.distanceTo(indexPos);
+                  if (pinchDist < 0.025) {
+                    // Raycast from index tip forward
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    if (
+                      indexTip.transform.orientation &&
+                      typeof indexTip.transform.orientation.x === 'number' &&
+                      typeof indexTip.transform.orientation.y === 'number' &&
+                      typeof indexTip.transform.orientation.z === 'number' &&
+                      typeof indexTip.transform.orientation.w === 'number'
+                    ) {
+                      const quat = new THREE.Quaternion(
+                        indexTip.transform.orientation.x,
+                        indexTip.transform.orientation.y,
+                        indexTip.transform.orientation.z,
+                        indexTip.transform.orientation.w
+                      );
+                      direction.applyQuaternion(quat);
+                    }
+                    raycaster.ray.origin.copy(indexPos);
+                    raycaster.ray.direction.copy(direction);
+                    const intersects = raycaster.intersectObjects(meshes, true);
+                    if (intersects.length > 0) {
+                      if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                        if (robotSound.context && robotSound.context.state === 'suspended') {
+                          robotSound.context.resume();
+                        }
+                        robotSound.stop();
+                        robotSound.play();
                       }
-                      robotSound.stop();
-                      robotSound.play();
                     }
                   }
                 }
               }
             }
+          }
+          } catch (err) {
+            // Prevent crash, log error for debugging
+            console.error('Hand tracking animation loop error:', err);
           }
         });
       }
