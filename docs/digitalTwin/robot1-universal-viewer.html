@@ -186,6 +186,15 @@
       let skyTexture = null;
       let skySphere = null;
       const loader = new THREE.TextureLoader();
+      // Always create the sky sphere, even before texture loads
+      const geometry = new THREE.SphereGeometry(50, 64, 32);
+      geometry.scale(-1, 1, 1); // Invert the sphere
+      let skyMaterial = new THREE.MeshBasicMaterial({ color: 0x223366, side: THREE.BackSide });
+      skySphere = new THREE.Mesh(geometry, skyMaterial);
+      skySphere.renderOrder = -1;
+      skySphere.frustumCulled = false;
+      skySphere.name = 'SkySphere';
+
       loader.load('./sky.jpeg', function(texture) {
         // For Three.js r152+, set colorSpace
         if (texture.colorSpace !== undefined) {
@@ -197,21 +206,21 @@
         if (!renderer.xr.isPresenting) {
           scene.background = skyTexture;
         }
-        // VR: create inverted sphere for sky
-        if (skySphere) scene.remove(skySphere);
-        const geometry = new THREE.SphereGeometry(50, 64, 32);
-        geometry.scale(-1, 1, 1); // Invert the sphere
-        const material = new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide });
-        skySphere = new THREE.Mesh(geometry, material);
-        skySphere.renderOrder = -1;
-        skySphere.frustumCulled = false;
-        skySphere.name = 'SkySphere';
-        // Only add in VR session
-        if (renderer.xr.isPresenting) scene.add(skySphere);
+        // VR: update sky sphere material
+        if (skyMaterial) {
+          skyMaterial.map = skyTexture;
+          skyMaterial.color.set(0xffffff);
+          skyMaterial.needsUpdate = true;
+        }
       }, undefined, function(err) {
         console.error('Failed to load sky.jpeg:', err);
         showFatal('Failed to load sky.jpeg');
         // Fallback: set a dark blue background
+        if (skyMaterial) {
+          skyMaterial.map = null;
+          skyMaterial.color.set(0x223366);
+          skyMaterial.needsUpdate = true;
+        }
         scene.background = new THREE.Color(0x223366);
       });
       // Load model and move it a bit further away in Z
@@ -259,13 +268,9 @@
 
         // Add sky sphere on VR session start, remove on end
         renderer.xr.addEventListener('sessionstart', () => {
-          // Always add sky sphere if available
+          // Always add sky sphere
           if (skySphere && !scene.getObjectByName('SkySphere')) {
             scene.add(skySphere);
-          }
-          // Fallback: set a dark blue background if no sky texture
-          if (!skySphere && !skyTexture) {
-            scene.background = new THREE.Color(0x223366);
           }
         });
         renderer.xr.addEventListener('sessionend', () => {
@@ -274,16 +279,16 @@
           }
         });
 
-        // --- User gesture to resume audio context before VR ---
-        function resumeAudioContext() {
-          if (robotSound && robotSound.context && robotSound.context.state === 'suspended') {
-            robotSound.context.resume();
-          }
-          window.removeEventListener('pointerdown', resumeAudioContext);
-        }
-        window.addEventListener('pointerdown', resumeAudioContext);
-
+        // In animation loop, if in VR and skyTexture loads late, update material
+        let lastSkyTexture = null;
         renderer.setAnimationLoop((time, frame) => {
+          // If in VR and skyTexture loads late, update material
+          if (renderer.xr.isPresenting && skyMaterial && skyTexture && skyTexture !== lastSkyTexture) {
+            skyMaterial.map = skyTexture;
+            skyMaterial.color.set(0xffffff);
+            skyMaterial.needsUpdate = true;
+            lastSkyTexture = skyTexture;
+          }
           controls.update();
           renderer.render(scene, camera);
           // Hand tracking pinch-to-sound
