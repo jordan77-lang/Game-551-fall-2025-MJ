@@ -142,6 +142,12 @@
         robotSound.setLoop(false);
         robotSound.setVolume(0.8);
       });
+      // Set 360 background for VR
+      const loader = new THREE.TextureLoader();
+      loader.load('./sky.jpeg', function(texture) {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        scene.background = texture;
+      });
       // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
         if (model) {
