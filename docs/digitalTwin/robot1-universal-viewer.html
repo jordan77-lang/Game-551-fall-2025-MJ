@@ -130,6 +130,8 @@
       clearScene();
       setupRenderer();
       setupScene();
+      // Move camera further back in VR
+      camera.position.set(0, 1.6, 3.5);
       // Set up audio listener and sound
       listener = new THREE.AudioListener();
       camera.add(listener);
@@ -140,7 +142,11 @@
         robotSound.setLoop(false);
         robotSound.setVolume(0.8);
       });
+      // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
+        if (model) {
+          model.position.set(0, 0, -1.5); // Place model 1.5 units in front of camera
+        }
         renderer.xr.enabled = true;
         vrButton = VRButton.createButton(renderer);
         document.body.appendChild(vrButton);
@@ -168,6 +174,10 @@
           const intersects = raycaster.intersectObjects(meshes, true);
           if (intersects.length > 0) {
             if (robotSound && robotSound.buffer) {
+              // Required for some browsers: resume audio context on user gesture
+              if (robotSound.context && robotSound.context.state === 'suspended') {
+                robotSound.context.resume();
+              }
               robotSound.stop();
               robotSound.play();
             }
@@ -181,8 +191,10 @@
           controller.addEventListener('select', onSelect);
         }
       }
+
       // --- Hand tracking support (Oculus Quest, WebXR) ---
-      // Listen for XRFrame and check for hand input sources
+      // Simple hand mesh visualization
+      const handMeshes = [];
       if (navigator.xr && renderer.xr.enabled) {
         renderer.setAnimationLoop((time, frame) => {
           // Standard render
@@ -193,13 +205,42 @@
           if (!session || !model) return;
           const meshes = [];
           model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          // Remove old hand meshes
+          for (const mesh of handMeshes) scene.remove(mesh);
+          handMeshes.length = 0;
           for (const inputSource of session.inputSources) {
             if (inputSource.hand) {
-              // Get thumb tip and index tip positions
+              // Visualize index tip and thumb tip as spheres
               const thumbTip = inputSource.hand.get('thumb-tip');
               const indexTip = inputSource.hand.get('index-finger-tip');
+              if (thumbTip && thumbTip.transform && thumbTip.transform.position) {
+                const thumbMesh = new THREE.Mesh(
+                  new THREE.SphereGeometry(0.015, 16, 16),
+                  new THREE.MeshBasicMaterial({ color: 0xff8800 })
+                );
+                thumbMesh.position.set(
+                  thumbTip.transform.position.x,
+                  thumbTip.transform.position.y,
+                  thumbTip.transform.position.z
+                );
+                scene.add(thumbMesh);
+                handMeshes.push(thumbMesh);
+              }
+              if (indexTip && indexTip.transform && indexTip.transform.position) {
+                const indexMesh = new THREE.Mesh(
+                  new THREE.SphereGeometry(0.015, 16, 16),
+                  new THREE.MeshBasicMaterial({ color: 0x00aaff })
+                );
+                indexMesh.position.set(
+                  indexTip.transform.position.x,
+                  indexTip.transform.position.y,
+                  indexTip.transform.position.z
+                );
+                scene.add(indexMesh);
+                handMeshes.push(indexMesh);
+              }
+              // Pinch detection and sound
               if (thumbTip && indexTip && thumbTip.transform && indexTip.transform) {
-                // Calculate distance between thumb and index tip
                 const thumbPos = new THREE.Vector3().set(
                   thumbTip.transform.position.x,
                   thumbTip.transform.position.y,
@@ -211,7 +252,6 @@
                   indexTip.transform.position.z
                 );
                 const pinchDist = thumbPos.distanceTo(indexPos);
-                // Pinch threshold (tweak as needed)
                 if (pinchDist < 0.025) {
                   // Raycast from index tip forward
                   const direction = new THREE.Vector3(0, 0, -1);
@@ -229,6 +269,9 @@
                   const intersects = raycaster.intersectObjects(meshes, true);
                   if (intersects.length > 0) {
                     if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                      if (robotSound.context && robotSound.context.state === 'suspended') {
+                        robotSound.context.resume();
+                      }
                       robotSound.stop();
                       robotSound.play();
                     }
