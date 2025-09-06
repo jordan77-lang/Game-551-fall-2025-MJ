@@ -41,8 +41,10 @@
     let currentMode = '3d';
 
     // Scene setup
-    let renderer, scene, camera, controls, model, vrButton, arSession, arPlaced = false;
-    let reticle, hitTestSource, refSpace, viewerSpace;
+  let renderer, scene, camera, controls, model, vrButton, arSession, arPlaced = false;
+  let reticle, hitTestSource, refSpace, viewerSpace;
+  // VR sound effect
+  let robotSound, listener;
 
     function clearScene() {
       if (renderer && renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
@@ -128,12 +130,118 @@
       clearScene();
       setupRenderer();
       setupScene();
+      // Set up audio listener and sound
+      listener = new THREE.AudioListener();
+      camera.add(listener);
+      robotSound = new THREE.Audio(listener);
+      const audioLoader = new THREE.AudioLoader();
+      audioLoader.load('./robot.mp3', function(buffer) {
+        robotSound.setBuffer(buffer);
+        robotSound.setLoop(false);
+        robotSound.setVolume(0.8);
+      });
       loadModel('./Robot1.glb', () => {
         renderer.xr.enabled = true;
         vrButton = VRButton.createButton(renderer);
         document.body.appendChild(vrButton);
+        // VR controller interaction for sound
+        setupVRControllerSound();
         animate();
       });
+    }
+
+    function setupVRControllerSound() {
+      // Only works in VR mode
+      const raycaster = new THREE.Raycaster();
+      // Controller select event (as before)
+      function onSelect() {
+        if (!model) return;
+        for (let i = 0; i < 2; i++) {
+          const controller = renderer.xr.getController(i);
+          if (!controller) continue;
+          const tempMatrix = new THREE.Matrix4();
+          tempMatrix.identity().extractRotation(controller.matrixWorld);
+          raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+          raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          const intersects = raycaster.intersectObjects(meshes, true);
+          if (intersects.length > 0) {
+            if (robotSound && robotSound.buffer) {
+              robotSound.stop();
+              robotSound.play();
+            }
+            break;
+          }
+        }
+      }
+      for (let i = 0; i < 2; i++) {
+        const controller = renderer.xr.getController(i);
+        if (controller) {
+          controller.addEventListener('select', onSelect);
+        }
+      }
+
+      // --- Hand tracking support (Oculus Quest, WebXR) ---
+      // Listen for XRFrame and check for hand input sources
+      if (navigator.xr && renderer.xr.enabled) {
+        renderer.setAnimationLoop((time, frame) => {
+          // Standard render
+          controls.update();
+          renderer.render(scene, camera);
+
+          // Hand tracking logic
+          const session = renderer.xr.getSession();
+          if (!session || !model) return;
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          for (const inputSource of session.inputSources) {
+            if (inputSource.hand) {
+              // Get thumb tip and index tip positions
+              const thumbTip = inputSource.hand.get('thumb-tip');
+              const indexTip = inputSource.hand.get('index-finger-tip');
+              if (thumbTip && indexTip && thumbTip.transform && indexTip.transform) {
+                // Calculate distance between thumb and index tip
+                const thumbPos = new THREE.Vector3().set(
+                  thumbTip.transform.position.x,
+                  thumbTip.transform.position.y,
+                  thumbTip.transform.position.z
+                );
+                const indexPos = new THREE.Vector3().set(
+                  indexTip.transform.position.x,
+                  indexTip.transform.position.y,
+                  indexTip.transform.position.z
+                );
+                const pinchDist = thumbPos.distanceTo(indexPos);
+                // Pinch threshold (tweak as needed)
+                if (pinchDist < 0.025) {
+                  // Raycast from index tip forward
+                  const direction = new THREE.Vector3(0, 0, -1);
+                  // Use index tip orientation if available
+                  if (indexTip.transform.orientation) {
+                    const quat = new THREE.Quaternion(
+                      indexTip.transform.orientation.x,
+                      indexTip.transform.orientation.y,
+                      indexTip.transform.orientation.z,
+                      indexTip.transform.orientation.w
+                    );
+                    direction.applyQuaternion(quat);
+                  }
+                  raycaster.ray.origin.copy(indexPos);
+                  raycaster.ray.direction.copy(direction);
+                  const intersects = raycaster.intersectObjects(meshes, true);
+                  if (intersects.length > 0) {
+                    if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                      robotSound.stop();
+                      robotSound.play();
+                    }
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
     }
 
     // AR Mode (WebXR immersive-ar)
