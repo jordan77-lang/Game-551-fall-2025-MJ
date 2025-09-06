@@ -178,6 +178,9 @@
         robotSound.setLoop(false);
         robotSound.setVolume(0.8);
         robotSoundLoaded = true;
+      }, undefined, function(err) {
+        console.error('Failed to load robot.mp3:', err);
+        showFatal('Failed to load robot.mp3');
       });
       // Set 360 background for VR
       let skyTexture = null;
@@ -205,6 +208,11 @@
         skySphere.name = 'SkySphere';
         // Only add in VR session
         if (renderer.xr.isPresenting) scene.add(skySphere);
+      }, undefined, function(err) {
+        console.error('Failed to load sky.jpeg:', err);
+        showFatal('Failed to load sky.jpeg');
+        // Fallback: set a dark blue background
+        scene.background = new THREE.Color(0x223366);
       });
       // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
@@ -251,8 +259,13 @@
 
         // Add sky sphere on VR session start, remove on end
         renderer.xr.addEventListener('sessionstart', () => {
+          // Always add sky sphere if available
           if (skySphere && !scene.getObjectByName('SkySphere')) {
             scene.add(skySphere);
+          }
+          // Fallback: set a dark blue background if no sky texture
+          if (!skySphere && !skyTexture) {
+            scene.background = new THREE.Color(0x223366);
           }
         });
         renderer.xr.addEventListener('sessionend', () => {
@@ -260,6 +273,15 @@
             scene.remove(skySphere);
           }
         });
+
+        // --- User gesture to resume audio context before VR ---
+        function resumeAudioContext() {
+          if (robotSound && robotSound.context && robotSound.context.state === 'suspended') {
+            robotSound.context.resume();
+          }
+          window.removeEventListener('pointerdown', resumeAudioContext);
+        }
+        window.addEventListener('pointerdown', resumeAudioContext);
 
         renderer.setAnimationLoop((time, frame) => {
           controls.update();
