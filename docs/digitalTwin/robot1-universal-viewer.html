@@ -201,6 +201,9 @@
           texture.colorSpace = THREE.SRGBColorSpace;
         }
         texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.encoding = THREE.sRGBEncoding;
         skyTexture = texture;
         // Desktop: set as background
         if (!renderer.xr.isPresenting) {
@@ -211,6 +214,7 @@
           skyMaterial.map = skyTexture;
           skyMaterial.color.set(0xffffff);
           skyMaterial.needsUpdate = true;
+          console.log('Sky texture applied to sphere');
         }
       }, undefined, function(err) {
         console.error('Failed to load sky.jpeg:', err);
@@ -271,6 +275,7 @@
           // Always add sky sphere
           if (skySphere && !scene.getObjectByName('SkySphere')) {
             scene.add(skySphere);
+            console.log('Sky sphere added to scene in VR');
           }
         });
         renderer.xr.addEventListener('sessionend', () => {
