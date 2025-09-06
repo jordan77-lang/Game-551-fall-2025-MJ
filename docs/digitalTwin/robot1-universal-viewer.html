@@ -144,12 +144,19 @@
         robotSoundLoaded = true;
       });
       // Set 360 background for VR
-      let skyLoaded = false;
+      let skyTexture = null;
       const loader = new THREE.TextureLoader();
       loader.load('./sky.jpeg', function(texture) {
+        // For Three.js r152+, set colorSpace
+        if (texture.colorSpace !== undefined) {
+          texture.colorSpace = THREE.SRGBColorSpace;
+        }
         texture.mapping = THREE.EquirectangularReflectionMapping;
-        scene.background = texture;
-        skyLoaded = true;
+        skyTexture = texture;
+        // Only set background if not in XR yet
+        if (!renderer.xr.isPresenting) {
+          scene.background = skyTexture;
+        }
       });
       // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
@@ -193,6 +200,13 @@
             controller.addEventListener('select', onSelect);
           }
         }
+
+        // Set background again after entering VR (for Quest compatibility)
+        renderer.xr.addEventListener('sessionstart', () => {
+          if (skyTexture) {
+            scene.background = skyTexture;
+          }
+        });
 
         renderer.setAnimationLoop((time, frame) => {
           controls.update();
