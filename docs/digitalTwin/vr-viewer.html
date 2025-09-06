@@ -12,10 +12,10 @@
 <body>
   <!-- WebXR VRButton will appear here -->
   <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/three.module.js';
-    import { GLTFLoader } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/GLTFLoader.js';
-    import { OrbitControls } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/OrbitControls.js';
-    import { VRButton } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/VRButton.js';
+    import * as THREE from './lib/three.module.js';
+    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
+    import { VRButton } from './lib/examples/jsm/webxr/VRButton.js';
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xdddddd); // Light grey background
