@@ -181,6 +181,7 @@
       });
       // Set 360 background for VR
       let skyTexture = null;
+      let skySphere = null;
       const loader = new THREE.TextureLoader();
       loader.load('./sky.jpeg', function(texture) {
         // For Three.js r152+, set colorSpace
@@ -189,10 +190,21 @@
         }
         texture.mapping = THREE.EquirectangularReflectionMapping;
         skyTexture = texture;
-        // Only set background if not in XR yet
+        // Desktop: set as background
         if (!renderer.xr.isPresenting) {
           scene.background = skyTexture;
         }
+        // VR: create inverted sphere for sky
+        if (skySphere) scene.remove(skySphere);
+        const geometry = new THREE.SphereGeometry(50, 64, 32);
+        geometry.scale(-1, 1, 1); // Invert the sphere
+        const material = new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide });
+        skySphere = new THREE.Mesh(geometry, material);
+        skySphere.renderOrder = -1;
+        skySphere.frustumCulled = false;
+        skySphere.name = 'SkySphere';
+        // Only add in VR session
+        if (renderer.xr.isPresenting) scene.add(skySphere);
       });
       // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
@@ -237,10 +249,15 @@
           }
         }
 
-        // Set background again after entering VR (for Quest compatibility)
+        // Add sky sphere on VR session start, remove on end
         renderer.xr.addEventListener('sessionstart', () => {
-          if (skyTexture) {
-            scene.background = skyTexture;
+          if (skySphere && !scene.getObjectByName('SkySphere')) {
+            scene.add(skySphere);
+          }
+        });
+        renderer.xr.addEventListener('sessionend', () => {
+          if (skySphere && scene.getObjectByName('SkySphere')) {
+            scene.remove(skySphere);
           }
         });
 
