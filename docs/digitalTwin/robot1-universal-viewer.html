@@ -130,23 +130,26 @@
       clearScene();
       setupRenderer();
       setupScene();
-      // Move camera further back in VR
       camera.position.set(0, 1.6, 3.5);
       // Set up audio listener and sound
       listener = new THREE.AudioListener();
       camera.add(listener);
       robotSound = new THREE.Audio(listener);
+      let robotSoundLoaded = false;
       const audioLoader = new THREE.AudioLoader();
       audioLoader.load('./robot.mp3', function(buffer) {
         robotSound.setBuffer(buffer);
         robotSound.setLoop(false);
         robotSound.setVolume(0.8);
+        robotSoundLoaded = true;
       });
       // Set 360 background for VR
+      let skyLoaded = false;
       const loader = new THREE.TextureLoader();
       loader.load('./sky.jpeg', function(texture) {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         scene.background = texture;
+        skyLoaded = true;
       });
       // Load model and move it a bit further away in Z
       loadModel('./Robot1.glb', () => {
@@ -156,9 +159,115 @@
         renderer.xr.enabled = true;
         vrButton = VRButton.createButton(renderer);
         document.body.appendChild(vrButton);
-        // VR controller and hand tracking interaction for sound
-        setupVRControllerSound();
-        animate();
+
+        // --- Unified VR animation loop: controller and hand tracking sound, 360 background ---
+        const raycaster = new THREE.Raycaster();
+        // Controller select event
+        function onSelect() {
+          if (!model) return;
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          for (let i = 0; i < 2; i++) {
+            const controller = renderer.xr.getController(i);
+            if (!controller) continue;
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+            const intersects = raycaster.intersectObjects(meshes, true);
+            if (intersects.length > 0) {
+              if (robotSound && robotSound.buffer) {
+                if (robotSound.context && robotSound.context.state === 'suspended') {
+                  robotSound.context.resume();
+                }
+                robotSound.stop();
+                robotSound.play();
+              }
+              break;
+            }
+          }
+        }
+        for (let i = 0; i < 2; i++) {
+          const controller = renderer.xr.getController(i);
+          if (controller) {
+            controller.addEventListener('select', onSelect);
+          }
+        }
+
+        renderer.setAnimationLoop((time, frame) => {
+          controls.update();
+          renderer.render(scene, camera);
+          // Hand tracking pinch-to-sound
+          const session = renderer.xr.getSession();
+          if (!session || !model) return;
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          for (const inputSource of session.inputSources) {
+            if (inputSource.hand) {
+              let thumbTip, indexTip;
+              try {
+                thumbTip = inputSource.hand.get('thumb-tip');
+                indexTip = inputSource.hand.get('index-finger-tip');
+              } catch (e) {
+                thumbTip = null; indexTip = null;
+              }
+              if (
+                thumbTip && indexTip &&
+                thumbTip.transform && indexTip.transform &&
+                thumbTip.transform.position && indexTip.transform.position &&
+                typeof thumbTip.transform.position.x === 'number' &&
+                typeof thumbTip.transform.position.y === 'number' &&
+                typeof thumbTip.transform.position.z === 'number' &&
+                typeof indexTip.transform.position.x === 'number' &&
+                typeof indexTip.transform.position.y === 'number' &&
+                typeof indexTip.transform.position.z === 'number'
+              ) {
+                const thumbPos = new THREE.Vector3().set(
+                  thumbTip.transform.position.x,
+                  thumbTip.transform.position.y,
+                  thumbTip.transform.position.z
+                );
+                const indexPos = new THREE.Vector3().set(
+                  indexTip.transform.position.x,
+                  indexTip.transform.position.y,
+                  indexTip.transform.position.z
+                );
+                const pinchDist = thumbPos.distanceTo(indexPos);
+                if (pinchDist < 0.025) {
+                  // Raycast from index tip forward
+                  const direction = new THREE.Vector3(0, 0, -1);
+                  if (
+                    indexTip.transform.orientation &&
+                    typeof indexTip.transform.orientation.x === 'number' &&
+                    typeof indexTip.transform.orientation.y === 'number' &&
+                    typeof indexTip.transform.orientation.z === 'number' &&
+                    typeof indexTip.transform.orientation.w === 'number'
+                  ) {
+                    const quat = new THREE.Quaternion(
+                      indexTip.transform.orientation.x,
+                      indexTip.transform.orientation.y,
+                      indexTip.transform.orientation.z,
+                      indexTip.transform.orientation.w
+                    );
+                    direction.applyQuaternion(quat);
+                  }
+                  raycaster.ray.origin.copy(indexPos);
+                  raycaster.ray.direction.copy(direction);
+                  const intersects = raycaster.intersectObjects(meshes, true);
+                  if (intersects.length > 0) {
+                    if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                      if (robotSound.context && robotSound.context.state === 'suspended') {
+                        robotSound.context.resume();
+                      }
+                      robotSound.stop();
+                      robotSound.play();
+                    }
+                  }
+                }
+              }
+            }
+          }
+        });
       });
     }
 
