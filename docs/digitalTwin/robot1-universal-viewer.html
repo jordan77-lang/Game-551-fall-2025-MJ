@@ -22,12 +22,12 @@
   </div>
   <div id="msg" role="status" aria-live="polite">Booting…</div>
   <div id="fatal-error" aria-hidden="true"></div>
+
   <script type="module">
     import * as THREE from './lib/three.module.js';
     import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
     import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
     import { VRButton } from './lib/examples/jsm/webxr/VRButton.js';
-    // ARButton is not standard, so AR will use WebXR immersive-ar if available
 
     const msg = document.getElementById('msg');
     const fatal = document.getElementById('fatal-error');
@@ -56,61 +56,61 @@
     }
 
     function setupRenderer() {
-  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0; // more natural
-  renderer.physicallyCorrectLights = true;
-  renderer.setClearAlpha(0);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  document.body.appendChild(renderer.domElement);
+      renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+      renderer.physicallyCorrectLights = true;
+      renderer.setClearAlpha(0); // transparent for desktop/AR; VR will override to 1.0
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
     }
 
     function setupScene() {
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xdddddd); // Light grey background
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 1000);
-  camera.position.set(0, 1.2, 2.5);
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 1, 0);
-  controls.update();
-  // --- Lighting for realism ---
-  // Sunlight (brighter)
-  const sun = new THREE.DirectionalLight(0xffffff, 4.5);
-  sun.position.set(5, 10, 2);
-  sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048;
-  sun.shadow.mapSize.height = 2048;
-  sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 50;
-  sun.shadow.camera.left = -5;
-  sun.shadow.camera.right = 5;
-  sun.shadow.camera.top = 5;
-  sun.shadow.camera.bottom = -5;
-  scene.add(sun);
-  // Hemisphere light for sky fill
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x88bb88, 0.7);
-  scene.add(hemi);
-  // Slightly brighter ambient
-  const amb = new THREE.AmbientLight(0xffffff, 0.35);
-  scene.add(amb);
-  // Ground plane for shadow (lighter shadow)
-  const groundGeo = new THREE.PlaneGeometry(20, 20);
-  const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI/2;
-  ground.position.y = 0;
-  ground.receiveShadow = true;
-  scene.add(ground);
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xdddddd); // desktop default
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 1000);
+      camera.position.set(0, 1.2, 2.5);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 1, 0);
+      controls.update();
 
-  // Subtle fill light in front of model to brighten viewer-facing side
-  const fill = new THREE.DirectionalLight(0xffffff, 1.2);
-  fill.position.set(0, 2, 4); // in front and above
-  fill.castShadow = false;
-  scene.add(fill);
+      // Lights
+      const sun = new THREE.DirectionalLight(0xffffff, 4.5);
+      sun.position.set(5, 10, 2);
+      sun.castShadow = true;
+      sun.shadow.mapSize.width = 2048;
+      sun.shadow.mapSize.height = 2048;
+      sun.shadow.camera.near = 0.5;
+      sun.shadow.camera.far = 50;
+      sun.shadow.camera.left = -5;
+      sun.shadow.camera.right = 5;
+      sun.shadow.camera.top = 5;
+      sun.shadow.camera.bottom = -5;
+      scene.add(sun);
+
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x88bb88, 0.7);
+      scene.add(hemi);
+
+      const amb = new THREE.AmbientLight(0xffffff, 0.35);
+      scene.add(amb);
+
+      // Ground
+      const groundGeo = new THREE.PlaneGeometry(20, 20);
+      const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = 0;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const fill = new THREE.DirectionalLight(0xffffff, 1.2);
+      fill.position.set(0, 2, 4);
+      fill.castShadow = false;
+      scene.add(fill);
     }
 
     function loadModel(path, onLoaded) {
@@ -121,9 +121,7 @@
           if (n.isMesh) {
             n.castShadow = true;
             n.receiveShadow = false;
-            if (n.material) {
-              n.material.needsUpdate = true;
-            }
+            if (n.material) n.material.needsUpdate = true;
           }
         });
         scene.add(model);
@@ -167,78 +165,90 @@
       setupRenderer();
       setupScene();
       camera.position.set(0, 1.6, 3.5);
-      // Set up audio listener and sound
+
+      // Opaque clear for XR so the sky sphere shows
+      renderer.setClearAlpha(1.0);
+
+      // Audio
       listener = new THREE.AudioListener();
       camera.add(listener);
       robotSound = new THREE.Audio(listener);
-      let robotSoundLoaded = false;
       const audioLoader = new THREE.AudioLoader();
       audioLoader.load('./robot.mp3', function(buffer) {
         robotSound.setBuffer(buffer);
         robotSound.setLoop(false);
         robotSound.setVolume(0.8);
-        robotSoundLoaded = true;
       }, undefined, function(err) {
         console.error('Failed to load robot.mp3:', err);
         showFatal('Failed to load robot.mp3');
       });
-      // Set 360 background for VR
-      let skyTexture = null;
-      let skySphere = null;
-      const loader = new THREE.TextureLoader();
-      // Always create the sky sphere, even before texture loads
+
+      // Sky sphere (created immediately; texture may attach later)
       const geometry = new THREE.SphereGeometry(50, 64, 32);
-      geometry.scale(-1, 1, 1); // Invert the sphere
-      let skyMaterial = new THREE.MeshBasicMaterial({ color: 0x223366, side: THREE.BackSide });
-      skySphere = new THREE.Mesh(geometry, skyMaterial);
+      geometry.scale(-1, 1, 1); // view from inside
+
+      const skyMaterial = new THREE.MeshBasicMaterial({
+        color: 0x223366,
+        side: THREE.BackSide,
+        depthWrite: false, // critical on Quest
+        fog: false
+      });
+
+      const skySphere = new THREE.Mesh(geometry, skyMaterial);
       skySphere.renderOrder = -1;
       skySphere.frustumCulled = false;
       skySphere.name = 'SkySphere';
 
+      const loader = new THREE.TextureLoader();
       loader.load('./sky.jpeg', function(texture) {
-        // For Three.js r152+, set colorSpace
         if (texture.colorSpace !== undefined) {
           texture.colorSpace = THREE.SRGBColorSpace;
         }
-        texture.mapping = THREE.EquirectangularReflectionMapping;
+        // No reflection mapping, no legacy encoding
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
-        texture.encoding = THREE.sRGBEncoding;
-        skyTexture = texture;
-        // Desktop: set as background
+        texture.generateMipmaps = false;
+
+        skyMaterial.map = texture;
+        skyMaterial.color.set(0xffffff);
+        skyMaterial.needsUpdate = true;
+
+        // If not in XR, show as scene background for desktop preview
         if (!renderer.xr.isPresenting) {
-          scene.background = skyTexture;
-        }
-        // VR: update sky sphere material
-        if (skyMaterial) {
-          skyMaterial.map = skyTexture;
-          skyMaterial.color.set(0xffffff);
-          skyMaterial.needsUpdate = true;
-          console.log('Sky texture applied to sphere');
+          scene.background = texture;
         }
       }, undefined, function(err) {
         console.error('Failed to load sky.jpeg:', err);
         showFatal('Failed to load sky.jpeg');
-        // Fallback: set a dark blue background
-        if (skyMaterial) {
-          skyMaterial.map = null;
-          skyMaterial.color.set(0x223366);
-          skyMaterial.needsUpdate = true;
-        }
+        skyMaterial.map = null;
+        skyMaterial.color.set(0x223366);
+        skyMaterial.needsUpdate = true;
         scene.background = new THREE.Color(0x223366);
       });
-      // Load model and move it a bit further away in Z
+
+      // Model
       loadModel('./Robot1.glb', () => {
-        if (model) {
-          model.position.set(0, 0, -1.5); // Place model 1.5 units in front of camera
-        }
+        if (model) model.position.set(0, 0, -1.5);
+
         renderer.xr.enabled = true;
         vrButton = VRButton.createButton(renderer);
         document.body.appendChild(vrButton);
 
-        // --- Unified VR animation loop: controller and hand tracking sound, 360 background ---
+        // Add/remove sky sphere with the VR session
+        renderer.xr.addEventListener('sessionstart', () => {
+          if (!scene.getObjectByName('SkySphere')) {
+            scene.add(skySphere);
+            console.log('Sky sphere added to scene in VR');
+          }
+        });
+        renderer.xr.addEventListener('sessionend', () => {
+          if (scene.getObjectByName('SkySphere')) {
+            scene.remove(skySphere);
+          }
+        });
+
+        // Controller select -> play sound if you hit the model
         const raycaster = new THREE.Raycaster();
-        // Controller select event
         function onSelect() {
           if (!model) return;
           const meshes = [];
@@ -246,57 +256,28 @@
           for (let i = 0; i < 2; i++) {
             const controller = renderer.xr.getController(i);
             if (!controller) continue;
-            const tempMatrix = new THREE.Matrix4();
-            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            const tempMatrix = new THREE.Matrix4().identity().extractRotation(controller.matrixWorld);
             raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
             raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
             const intersects = raycaster.intersectObjects(meshes, true);
-            if (intersects.length > 0) {
-              if (robotSound && robotSound.buffer) {
-                if (robotSound.context && robotSound.context.state === 'suspended') {
-                  robotSound.context.resume();
-                }
-                robotSound.stop();
-                robotSound.play();
-              }
+            if (intersects.length > 0 && robotSound && robotSound.buffer) {
+              if (robotSound.context && robotSound.context.state === 'suspended') robotSound.context.resume();
+              robotSound.stop(); robotSound.play();
               break;
             }
           }
         }
         for (let i = 0; i < 2; i++) {
-          const controller = renderer.xr.getController(i);
-          if (controller) {
-            controller.addEventListener('select', onSelect);
-          }
+          const c = renderer.xr.getController(i);
+          if (c) c.addEventListener('select', onSelect);
         }
 
-        // Add sky sphere on VR session start, remove on end
-        renderer.xr.addEventListener('sessionstart', () => {
-          // Always add sky sphere
-          if (skySphere && !scene.getObjectByName('SkySphere')) {
-            scene.add(skySphere);
-            console.log('Sky sphere added to scene in VR');
-          }
-        });
-        renderer.xr.addEventListener('sessionend', () => {
-          if (skySphere && scene.getObjectByName('SkySphere')) {
-            scene.remove(skySphere);
-          }
-        });
-
-        // In animation loop, if in VR and skyTexture loads late, update material
-        let lastSkyTexture = null;
+        // Animation loop
         renderer.setAnimationLoop((time, frame) => {
-          // If in VR and skyTexture loads late, update material
-          if (renderer.xr.isPresenting && skyMaterial && skyTexture && skyTexture !== lastSkyTexture) {
-            skyMaterial.map = skyTexture;
-            skyMaterial.color.set(0xffffff);
-            skyMaterial.needsUpdate = true;
-            lastSkyTexture = skyTexture;
-          }
           controls.update();
           renderer.render(scene, camera);
-          // Hand tracking pinch-to-sound
+
+          // Hand tracking pinch-to-sound (unchanged)
           const session = renderer.xr.getSession();
           if (!session || !model) return;
           const meshes = [];
@@ -307,60 +288,28 @@
               try {
                 thumbTip = inputSource.hand.get('thumb-tip');
                 indexTip = inputSource.hand.get('index-finger-tip');
-              } catch (e) {
-                thumbTip = null; indexTip = null;
-              }
+              } catch(e) { thumbTip = null; indexTip = null; }
               if (
                 thumbTip && indexTip &&
                 thumbTip.transform && indexTip.transform &&
-                thumbTip.transform.position && indexTip.transform.position &&
-                typeof thumbTip.transform.position.x === 'number' &&
-                typeof thumbTip.transform.position.y === 'number' &&
-                typeof thumbTip.transform.position.z === 'number' &&
-                typeof indexTip.transform.position.x === 'number' &&
-                typeof indexTip.transform.position.y === 'number' &&
-                typeof indexTip.transform.position.z === 'number'
+                thumbTip.transform.position && indexTip.transform.position
               ) {
-                const thumbPos = new THREE.Vector3().set(
-                  thumbTip.transform.position.x,
-                  thumbTip.transform.position.y,
-                  thumbTip.transform.position.z
-                );
-                const indexPos = new THREE.Vector3().set(
-                  indexTip.transform.position.x,
-                  indexTip.transform.position.y,
-                  indexTip.transform.position.z
-                );
+                const tp = thumbTip.transform.position, ip = indexTip.transform.position;
+                const thumbPos = new THREE.Vector3(tp.x, tp.y, tp.z);
+                const indexPos = new THREE.Vector3(ip.x, ip.y, ip.z);
                 const pinchDist = thumbPos.distanceTo(indexPos);
                 if (pinchDist < 0.025) {
-                  // Raycast from index tip forward
-                  const direction = new THREE.Vector3(0, 0, -1);
-                  if (
-                    indexTip.transform.orientation &&
-                    typeof indexTip.transform.orientation.x === 'number' &&
-                    typeof indexTip.transform.orientation.y === 'number' &&
-                    typeof indexTip.transform.orientation.z === 'number' &&
-                    typeof indexTip.transform.orientation.w === 'number'
-                  ) {
-                    const quat = new THREE.Quaternion(
-                      indexTip.transform.orientation.x,
-                      indexTip.transform.orientation.y,
-                      indexTip.transform.orientation.z,
-                      indexTip.transform.orientation.w
-                    );
-                    direction.applyQuaternion(quat);
+                  const direction = new THREE.Vector3(0,0,-1);
+                  if (indexTip.transform.orientation) {
+                    const q = indexTip.transform.orientation;
+                    direction.applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
                   }
                   raycaster.ray.origin.copy(indexPos);
                   raycaster.ray.direction.copy(direction);
-                  const intersects = raycaster.intersectObjects(meshes, true);
-                  if (intersects.length > 0) {
-                    if (robotSound && robotSound.buffer && !robotSound.isPlaying) {
-                      if (robotSound.context && robotSound.context.state === 'suspended') {
-                        robotSound.context.resume();
-                      }
-                      robotSound.stop();
-                      robotSound.play();
-                    }
+                  const hits = raycaster.intersectObjects(meshes, true);
+                  if (hits.length > 0 && robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                    if (robotSound.context && robotSound.context.state === 'suspended') robotSound.context.resume();
+                    robotSound.stop(); robotSound.play();
                   }
                 }
               }
@@ -368,8 +317,6 @@
           }
         });
       });
-// removed stray closing brace
-
     }
 
     // AR Mode (WebXR immersive-ar)
@@ -377,28 +324,26 @@
       clearScene();
       setupRenderer();
       setupScene();
-      loadModel('./Robot1.glb', () => {
-        say('Initializing AR…');
-      });
-      if (!('xr' in navigator)) {
-        showFatal('WebXR not supported on this device/browser.');
-        return;
-      }
+      loadModel('./Robot1.glb', () => { say('Initializing AR…'); });
+
+      if (!('xr' in navigator)) { showFatal('WebXR not supported on this device/browser.'); return; }
       try {
         const supported = await navigator.xr.isSessionSupported('immersive-ar');
-        if (!supported) {
-          showFatal('AR not supported on this device/browser.');
-          return;
-        }
-        arSession = await navigator.xr.requestSession('immersive-ar', { requiredFeatures:['hit-test'], optionalFeatures:['dom-overlay'], domOverlay:{ root: document.body } });
+        if (!supported) { showFatal('AR not supported on this device/browser.'); return; }
+        arSession = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures:['hit-test'],
+          optionalFeatures:['dom-overlay'],
+          domOverlay:{ root: document.body }
+        });
       } catch (e) {
         showFatal('Failed to start AR session: ' + e.message);
         return;
       }
+
       renderer.xr.enabled = true;
       renderer.xr.setReferenceSpaceType('local');
       await renderer.xr.setSession(arSession);
-      // Reticle
+
       reticle = new THREE.Mesh(
         new THREE.RingGeometry(0.12,0.14,48,1),
         new THREE.MeshBasicMaterial({ color:0x00ff88, toneMapped:false })
@@ -407,24 +352,23 @@
       reticle.matrixAutoUpdate = false;
       reticle.visible = false;
       scene.add(reticle);
-      // Hit test
+
       refSpace = renderer.xr.getReferenceSpace();
       viewerSpace = await arSession.requestReferenceSpace('viewer');
       hitTestSource = await arSession.requestHitTestSource({ space: viewerSpace });
-      // AR frame loop
+
       renderer.setAnimationLoop((time, frame) => {
         const xrCam = renderer.xr.getCamera();
-        // Hit test
         if (hitTestSource && refSpace && model) {
           const hits = frame.getHitTestResults(hitTestSource);
           if (hits.length) {
-            const hit = hits[0];
-            const pose = hit.getPose(refSpace);
+            const pose = hits[0].getPose(refSpace);
             if (pose) {
               reticle.visible = true;
               reticle.matrix.fromArray(pose.transform.matrix);
               if (!arPlaced && frame.session.inputSources.length) {
-                frame.session.inputSources[0].gamepad && frame.session.inputSources[0].gamepad.buttons[0].pressed && placeModel();
+                frame.session.inputSources[0].gamepad &&
+                frame.session.inputSources[0].gamepad.buttons[0].pressed && placeModel();
               }
             }
           } else {
@@ -433,18 +377,15 @@
         }
         renderer.render(scene, xrCam);
       });
-      // Place model on tap
+
       function placeModel() {
-        if (arPlaced) return;
-        if (!model) return;
+        if (arPlaced || !model) return;
         model.position.setFromMatrixPosition(reticle.matrix);
         arPlaced = true;
         say('Placed!');
       }
       window.addEventListener('touchend', placeModel);
-      arSession.addEventListener('end', () => {
-        window.removeEventListener('touchend', placeModel);
-      });
+      arSession.addEventListener('end', () => { window.removeEventListener('touchend', placeModel); });
     }
 
     // Button handlers
