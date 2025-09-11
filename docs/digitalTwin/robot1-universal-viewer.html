@@ -277,6 +277,12 @@
           controls.update();
           renderer.render(scene, camera);
 
+          // Always center sky sphere on camera in VR to prevent parallax
+          if (renderer.xr.isPresenting && scene.getObjectByName('SkySphere') && camera) {
+            const sky = scene.getObjectByName('SkySphere');
+            sky.position.copy(camera.position);
+          }
+
           // Hand tracking pinch-to-sound (unchanged)
           const session = renderer.xr.getSession();
           if (!session || !model) return;
