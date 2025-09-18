@@ -5,6 +5,79 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fjalla+One&display=swap" rel="stylesheet">
     <style>
+        body {
+            background: linear-gradient(135deg, #232526 0%, #414345 100%);
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            color: #f3f4f6;
+        }
+        #game {
+            background: rgba(30, 41, 59, 0.95);
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+            max-width: 600px;
+            margin: 40px auto 0 auto;
+            padding: 36px 28px 28px 28px;
+        }
+        h1 {
+            color: #fbbf24;
+            font-size: 3.2em;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 8px #000a;
+            margin-bottom: 18px;
+            text-align: center;
+        }
+        strong {
+            color: #a5b4fc;
+            font-size: 1.1em;
+        }
+        button {
+            background: linear-gradient(90deg, #fbbf24 60%, #fde68a 100%);
+            color: #232526;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-family: "Fjalla One", sans-serif;
+            font-weight: 600;
+            padding: 10px 22px;
+            margin: 0 8px 8px 0;
+            box-shadow: 0 2px 8px #0002;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background: linear-gradient(90deg, #fde68a 60%, #fbbf24 100%);
+            color: #1e293b;
+            box-shadow: 0 4px 16px #fbbf2440;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #message {
+            color: #fbbf24;
+            font-size: 1.2em;
+            margin-top: 18px;
+            min-height: 32px;
+            text-shadow: 0 1px 4px #000a;
+        }
+        #dealer-cards img, #player-cards img {
+            box-shadow: 0 2px 8px #0006;
+            border-radius: 6px;
+            background: #fff2;
+            height: 120px !important;
+            width: auto;
+        }
+        #dealer-cards, #player-cards {
+            margin-bottom: 8px;
+            display: inline-block;
+        }
+        .fjalla-one-regular {
+            font-family: "Fjalla One", sans-serif;
+            font-weight: 400;
+            font-style: normal;
+        }
         .fjalla-one-regular {
             font-family: "Fjalla One", sans-serif;
             font-weight: 400;
@@ -92,7 +165,7 @@
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
             }
-            img.style.height = '80px';
+            img.style.height = '120px';
             img.style.marginRight = '4px';
             container.appendChild(img);
         });
@@ -128,7 +201,7 @@
                 let img = document.createElement('img');
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
-                img.style.height = '80px';
+                img.style.height = '120px';
                 img.style.marginRight = '4px';
                 splitCardsDiv.appendChild(img);
             });
@@ -155,7 +228,7 @@
                 let img = document.createElement('img');
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
-                img.style.height = '80px';
+                img.style.height = '120px';
                 img.style.marginRight = '4px';
                 origCardsDiv.appendChild(img);
             });
@@ -180,7 +253,7 @@
                 let img = document.createElement('img');
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
-                img.style.height = '80px';
+                img.style.height = '120px';
                 img.style.marginRight = '4px';
                 cardsDiv.appendChild(img);
             });
