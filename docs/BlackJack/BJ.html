@@ -55,9 +55,40 @@
         return val;
     }
 
+    function cardImageFilename(card) {
+        // Map suit and value to filename
+        let suitMap = {'♠': 'spades', '♥': 'hearts', '♦': 'diamonds', '♣': 'clubs'};
+        let valueMap = {'A': 'ace', 'J': 'jack', 'Q': 'queen', 'K': 'king'};
+        let value = valueMap[card.value] || card.value;
+        return value + '_of_' + suitMap[card.suit] + '.png';
+    }
+
+    function renderHand(hand, containerId, hideFirst) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '';
+        hand.forEach((card, i) => {
+            if (hideFirst && i === 0) {
+                // Show card back for hidden dealer card
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/back.png';
+                img.alt = 'Hidden';
+                img.style.height = '80px';
+                img.style.marginRight = '4px';
+                container.appendChild(img);
+            } else {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '80px';
+                img.style.marginRight = '4px';
+                container.appendChild(img);
+            }
+        });
+    }
+
     function render() {
-        document.getElementById('player-cards').textContent = playerHand.map(c => c.value + c.suit).join(' ');
-        document.getElementById('dealer-cards').textContent = dealerHand.map((c,i) => (gameOver||i>0)?(c.value+c.suit):'??').join(' ');
+        renderHand(playerHand, 'player-cards', false);
+        renderHand(dealerHand, 'dealer-cards', !(gameOver));
         document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ')';
         document.getElementById('dealer-score').textContent = gameOver ? ' (' + handValue(dealerHand) + ')' : '';
     }
