@@ -21,6 +21,8 @@
         <div style="margin-top:24px;">
             <button id="hit">Hit</button>
             <button id="stand">Stand</button>
+            <button id="double">Double Down</button>
+            <button id="split">Split</button>
             <button id="restart">Restart</button>
         </div>
         <div id="message" style="margin-top:20px; font-weight:bold;"></div>
@@ -31,6 +33,8 @@
     const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
     let deck = [];
     let playerHand = [];
+    let playerHand2 = null; // for split
+    let activeHand = 1; // 1 or 2
     let dealerHand = [];
     let gameOver = false;
 
@@ -67,29 +71,45 @@
         const container = document.getElementById(containerId);
         container.innerHTML = '';
         hand.forEach((card, i) => {
+            let img = document.createElement('img');
             if (hideFirst && i === 0) {
-                // Show card back for hidden dealer card
-                let img = document.createElement('img');
+                // Use back.png for the dealer's hidden card
                 img.src = '../BlackJack/Cards/back.png';
                 img.alt = 'Hidden';
-                img.style.height = '80px';
-                img.style.marginRight = '4px';
-                container.appendChild(img);
             } else {
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+            }
+            img.style.height = '80px';
+            img.style.marginRight = '4px';
+            container.appendChild(img);
+        });
+    }
+
+    function render() {
+        if (playerHand2) {
+            renderHand(playerHand, 'player-cards', false);
+            // Show second hand below
+            let pc = document.getElementById('player-cards');
+            let br = document.createElement('br');
+            pc.appendChild(br);
+            let label = document.createElement('span');
+            label.textContent = 'Split Hand: ';
+            pc.appendChild(label);
+            playerHand2.forEach(card => {
                 let img = document.createElement('img');
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
                 img.style.height = '80px';
                 img.style.marginRight = '4px';
-                container.appendChild(img);
-            }
-        });
-    }
-
-    function render() {
-        renderHand(playerHand, 'player-cards', false);
+                pc.appendChild(img);
+            });
+            document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ') / (' + handValue(playerHand2) + ')';
+        } else {
+            renderHand(playerHand, 'player-cards', false);
+            document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ')';
+        }
         renderHand(dealerHand, 'dealer-cards', !(gameOver));
-        document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ')';
         document.getElementById('dealer-score').textContent = gameOver ? ' (' + handValue(dealerHand) + ')' : '';
     }
 
@@ -119,13 +139,29 @@
     }
 
     function startGame() {
-        deck = createDeck();
-        playerHand = [deck.pop(), deck.pop()];
-        dealerHand = [deck.pop(), deck.pop()];
-        gameOver = false;
-        document.getElementById('message').textContent = '';
-        render();
+    deck = createDeck();
+    playerHand = [deck.pop(), deck.pop()];
+    playerHand2 = null;
+    activeHand = 1;
+    dealerHand = [deck.pop(), deck.pop()];
+    gameOver = false;
+    document.getElementById('message').textContent = '';
+    render();
     }
+
+    document.getElementById('double').onclick = function() {
+        if (gameOver || playerHand.length !== 2) return;
+        // Double Down: player gets one card, then stands
+        playerHand.push(deck.pop());
+        render();
+        if (handValue(playerHand) > 21) {
+            gameOver = true;
+            render();
+            checkGame();
+        } else {
+            dealerTurn();
+        }
+    };
 
     document.getElementById('hit').onclick = function() {
         if (gameOver) return;
@@ -143,6 +179,21 @@
     };
     document.getElementById('restart').onclick = function() {
         startGame();
+    };
+
+    document.getElementById('split').onclick = function() {
+        if (gameOver || playerHand.length !== 2 || playerHand2) return;
+        // Only allow split if both cards are the same value
+        let v1 = playerHand[0].value, v2 = playerHand[1].value;
+        if (v1 !== v2) {
+            document.getElementById('message').textContent = 'You can only split with two cards of the same value!';
+            return;
+        }
+        playerHand2 = [playerHand.pop()];
+        playerHand.push(deck.pop());
+        playerHand2.push(deck.pop());
+        activeHand = 1;
+        render();
     };
 
     startGame();
