@@ -14,7 +14,6 @@
             <span id="dealer-score"></span>
         </div>
         <div style="margin-top:16px;">
-            <strong>Your Hand:</strong>
             <span id="player-cards"></span>
             <span id="player-score"></span>
         </div>
@@ -87,27 +86,98 @@
     }
 
     function render() {
+        // Enable/disable Split button based on hand
+        const splitBtn = document.getElementById('split');
+        if (
+            !gameOver &&
+            playerHand.length === 2 &&
+            !playerHand2 &&
+            playerHand[0].value === playerHand[1].value
+        ) {
+            splitBtn.disabled = false;
+        } else {
+            splitBtn.disabled = true;
+        }
         if (playerHand2) {
-            renderHand(playerHand, 'player-cards', false);
-            // Show second hand below
+            // Show split hand to the left of the original hand
             let pc = document.getElementById('player-cards');
-            let br = document.createElement('br');
-            pc.appendChild(br);
-            let label = document.createElement('span');
-            label.textContent = 'Split Hand: ';
-            pc.appendChild(label);
+            pc.innerHTML = '';
+            // Split hand
+            let splitDiv = document.createElement('span');
+            splitDiv.style.display = 'inline-block';
+            splitDiv.style.verticalAlign = 'top';
+            let splitLabel = document.createElement('div');
+            splitLabel.textContent = 'Split Hand:';
+            splitDiv.appendChild(splitLabel);
+            // Add the cards
+            let splitCardsDiv = document.createElement('div');
             playerHand2.forEach(card => {
                 let img = document.createElement('img');
                 img.src = '../BlackJack/Cards/' + cardImageFilename(card);
                 img.alt = card.value + card.suit;
                 img.style.height = '80px';
                 img.style.marginRight = '4px';
-                pc.appendChild(img);
+                splitCardsDiv.appendChild(img);
             });
-            document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ') / (' + handValue(playerHand2) + ')';
+            splitDiv.appendChild(splitCardsDiv);
+            // Score under images
+            let splitScore = document.createElement('div');
+            splitScore.textContent = 'Score: ' + handValue(playerHand2);
+            splitScore.style.marginTop = '4px';
+            splitDiv.appendChild(splitScore);
+            pc.appendChild(splitDiv);
+
+            // Original hand
+            let origDiv = document.createElement('span');
+            origDiv.style.display = 'inline-block';
+            origDiv.style.marginLeft = '32px';
+            origDiv.style.verticalAlign = 'top';
+            // Only add 'Your Hand:' label if not already present and not in the main container
+            let origLabel = document.createElement('div');
+            origLabel.textContent = 'Your Hand:';
+            origDiv.appendChild(origLabel);
+            // Add the cards
+            let origCardsDiv = document.createElement('div');
+            playerHand.forEach(card => {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '80px';
+                img.style.marginRight = '4px';
+                origCardsDiv.appendChild(img);
+            });
+            origDiv.appendChild(origCardsDiv);
+            // Score under images
+            let origScore = document.createElement('div');
+            origScore.textContent = 'Score: ' + handValue(playerHand);
+            origScore.style.marginTop = '4px';
+            origDiv.appendChild(origScore);
+            pc.appendChild(origDiv);
+            document.getElementById('player-score').textContent = '';
         } else {
-            renderHand(playerHand, 'player-cards', false);
-            document.getElementById('player-score').textContent = ' (' + handValue(playerHand) + ')';
+            let pc = document.getElementById('player-cards');
+            pc.innerHTML = '';
+            // Only add 'Your Hand:' label once when not split
+            let label = document.createElement('div');
+            label.textContent = 'Your Hand:';
+            pc.appendChild(label);
+            // Add the cards
+            let cardsDiv = document.createElement('div');
+            playerHand.forEach(card => {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '80px';
+                img.style.marginRight = '4px';
+                cardsDiv.appendChild(img);
+            });
+            pc.appendChild(cardsDiv);
+            // Score under images
+            let scoreDiv = document.createElement('div');
+            scoreDiv.textContent = 'Score: ' + handValue(playerHand);
+            scoreDiv.style.marginTop = '4px';
+            pc.appendChild(scoreDiv);
+            document.getElementById('player-score').textContent = '';
         }
         renderHand(dealerHand, 'dealer-cards', !(gameOver));
         document.getElementById('dealer-score').textContent = gameOver ? ' (' + handValue(dealerHand) + ')' : '';
@@ -165,17 +235,47 @@
 
     document.getElementById('hit').onclick = function() {
         if (gameOver) return;
-        playerHand.push(deck.pop());
-        render();
-        if (handValue(playerHand) > 21) {
-            gameOver = true;
+        if (playerHand2) {
+            // If split, hit on the active hand
+            if (activeHand === 1) {
+                playerHand2.push(deck.pop());
+                render();
+                if (handValue(playerHand2) > 21) {
+                    // Move to original hand if split hand busts
+                    activeHand = 2;
+                    render();
+                }
+            } else {
+                playerHand.push(deck.pop());
+                render();
+                if (handValue(playerHand) > 21) {
+                    // Both hands played, dealer's turn
+                    dealerTurn();
+                }
+            }
+        } else {
+            playerHand.push(deck.pop());
             render();
-            checkGame();
+            if (handValue(playerHand) > 21) {
+                gameOver = true;
+                render();
+                checkGame();
+            }
         }
     };
     document.getElementById('stand').onclick = function() {
         if (gameOver) return;
-        dealerTurn();
+        if (playerHand2) {
+            if (activeHand === 1) {
+                // Move to original hand
+                activeHand = 2;
+                render();
+            } else {
+                dealerTurn();
+            }
+        } else {
+            dealerTurn();
+        }
     };
     document.getElementById('restart').onclick = function() {
         startGame();
