@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fjalla+One&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #232526 0%, #414345 100%);
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            color: #f3f4f6;
+        }
+        #game {
+            background: rgba(30, 41, 59, 0.95);
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+            max-width: 600px;
+            margin: 40px auto 0 auto;
+            padding: 36px 28px 28px 28px;
+        }
+        h1 {
+            color: #fbbf24;
+            font-size: 3.2em;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 8px #000a;
+            margin-bottom: 18px;
+            text-align: center;
+        }
+        strong {
+            color: #a5b4fc;
+            font-size: 1.1em;
+        }
+        button {
+            background: linear-gradient(90deg, #fbbf24 60%, #fde68a 100%);
+            color: #232526;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-family: "Fjalla One", sans-serif;
+            font-weight: 600;
+            padding: 10px 22px;
+            margin: 0 8px 8px 0;
+            box-shadow: 0 2px 8px #0002;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background: linear-gradient(90deg, #fde68a 60%, #fbbf24 100%);
+            color: #1e293b;
+            box-shadow: 0 4px 16px #fbbf2440;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #message {
+            color: #fbbf24;
+            font-size: 1.2em;
+            margin-top: 18px;
+            min-height: 32px;
+            text-shadow: 0 1px 4px #000a;
+        }
+        #dealer-cards img, #player-cards img {
+            box-shadow: 0 2px 8px #0006;
+            border-radius: 6px;
+            background: #fff2;
+            height: 120px !important;
+            width: auto;
+        }
+        #dealer-cards, #player-cards {
+            margin-bottom: 8px;
+            display: inline-block;
+        }
+        .fjalla-one-regular {
+            font-family: "Fjalla One", sans-serif;
+            font-weight: 400;
+            font-style: normal;
+        }
+        .fjalla-one-regular {
+            font-family: "Fjalla One", sans-serif;
+            font-weight: 400;
+            font-style: normal;
+        }
+        h1, h2, button, #message, .fjalla-one-regular, #game {
+            font-family: "Fjalla One", sans-serif;
+        }
+    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black Jack</title>
+</head>
+<body>
+    <h1 class="fjalla-one-regular">Black Jack</h1>
+    <div id="game">
+        <div>
+            <strong>Dealer's Hand:</strong>
+            <span id="dealer-cards"></span>
+            <span id="dealer-score"></span>
+        </div>
+        <div style="margin-top:16px;">
+            <span id="player-cards"></span>
+            <span id="player-score"></span>
+        </div>
+        <div style="margin-top:24px;">
+            <button id="hit">Hit</button>
+            <button id="stand">Stand</button>
+            <button id="double">Double Down</button>
+            <button id="split">Split</button>
+            <button id="restart">Restart</button>
+        </div>
+        <div id="message" style="margin-top:20px; font-weight:bold;"></div>
+    </div>
+    <script>
+    // Simple Blackjack game logic
+    const suits = ['♠', '♥', '♦', '♣'];
+    const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+    let deck = [];
+    let playerHand = [];
+    let playerHand2 = null; // for split
+    let activeHand = 1; // 1 or 2
+    let dealerHand = [];
+    let gameOver = false;
+
+    function createDeck() {
+        let d = [];
+        for (let s of suits) {
+            for (let v of values) {
+                d.push({suit: s, value: v});
+            }
+        }
+        return d.sort(() => Math.random() - 0.5);
+    }
+
+    function handValue(hand) {
+        let val = 0, aces = 0;
+        for (let card of hand) {
+            if (card.value === 'A') { aces++; val += 11; }
+            else if (['K','Q','J'].includes(card.value)) val += 10;
+            else val += parseInt(card.value);
+        }
+        while (val > 21 && aces) { val -= 10; aces--; }
+        return val;
+    }
+
+    function cardImageFilename(card) {
+        // Map suit and value to filename
+        let suitMap = {'♠': 'spades', '♥': 'hearts', '♦': 'diamonds', '♣': 'clubs'};
+        let valueMap = {'A': 'ace', 'J': 'jack', 'Q': 'queen', 'K': 'king'};
+        let value = valueMap[card.value] || card.value;
+        return value + '_of_' + suitMap[card.suit] + '.png';
+    }
+
+    function renderHand(hand, containerId, hideFirst) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '';
+        hand.forEach((card, i) => {
+            let img = document.createElement('img');
+            if (hideFirst && i === 0) {
+                // Use back.png for the dealer's hidden card
+                img.src = '../BlackJack/Cards/back.png';
+                img.alt = 'Hidden';
+            } else {
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+            }
+            img.style.height = '120px';
+            img.style.marginRight = '4px';
+            container.appendChild(img);
+        });
+    }
+
+    function render() {
+        // Enable/disable Split button based on hand
+        const splitBtn = document.getElementById('split');
+        if (
+            !gameOver &&
+            playerHand.length === 2 &&
+            !playerHand2 &&
+            playerHand[0].value === playerHand[1].value
+        ) {
+            splitBtn.disabled = false;
+        } else {
+            splitBtn.disabled = true;
+        }
+        if (playerHand2) {
+            // Show split hand to the left of the original hand
+            let pc = document.getElementById('player-cards');
+            pc.innerHTML = '';
+            // Split hand
+            let splitDiv = document.createElement('span');
+            splitDiv.style.display = 'inline-block';
+            splitDiv.style.verticalAlign = 'top';
+            let splitLabel = document.createElement('div');
+            splitLabel.textContent = 'Split Hand:';
+            splitDiv.appendChild(splitLabel);
+            // Add the cards
+            let splitCardsDiv = document.createElement('div');
+            playerHand2.forEach(card => {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '120px';
+                img.style.marginRight = '4px';
+                splitCardsDiv.appendChild(img);
+            });
+            splitDiv.appendChild(splitCardsDiv);
+            // Score under images
+            let splitScore = document.createElement('div');
+            splitScore.textContent = 'Score: ' + handValue(playerHand2);
+            splitScore.style.marginTop = '4px';
+            splitDiv.appendChild(splitScore);
+            pc.appendChild(splitDiv);
+
+            // Original hand
+            let origDiv = document.createElement('span');
+            origDiv.style.display = 'inline-block';
+            origDiv.style.marginLeft = '32px';
+            origDiv.style.verticalAlign = 'top';
+            // Only add 'Your Hand:' label if not already present and not in the main container
+            let origLabel = document.createElement('div');
+            origLabel.textContent = 'Your Hand:';
+            origDiv.appendChild(origLabel);
+            // Add the cards
+            let origCardsDiv = document.createElement('div');
+            playerHand.forEach(card => {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '120px';
+                img.style.marginRight = '4px';
+                origCardsDiv.appendChild(img);
+            });
+            origDiv.appendChild(origCardsDiv);
+            // Score under images
+            let origScore = document.createElement('div');
+            origScore.textContent = 'Score: ' + handValue(playerHand);
+            origScore.style.marginTop = '4px';
+            origDiv.appendChild(origScore);
+            pc.appendChild(origDiv);
+            document.getElementById('player-score').textContent = '';
+        } else {
+            let pc = document.getElementById('player-cards');
+            pc.innerHTML = '';
+            // Only add 'Your Hand:' label once when not split
+            let label = document.createElement('div');
+            label.textContent = 'Your Hand:';
+            pc.appendChild(label);
+            // Add the cards
+            let cardsDiv = document.createElement('div');
+            playerHand.forEach(card => {
+                let img = document.createElement('img');
+                img.src = '../BlackJack/Cards/' + cardImageFilename(card);
+                img.alt = card.value + card.suit;
+                img.style.height = '120px';
+                img.style.marginRight = '4px';
+                cardsDiv.appendChild(img);
+            });
+            pc.appendChild(cardsDiv);
+            // Score under images
+            let scoreDiv = document.createElement('div');
+            scoreDiv.textContent = 'Score: ' + handValue(playerHand);
+            scoreDiv.style.marginTop = '4px';
+            pc.appendChild(scoreDiv);
+            document.getElementById('player-score').textContent = '';
+        }
+        renderHand(dealerHand, 'dealer-cards', !(gameOver));
+        document.getElementById('dealer-score').textContent = gameOver ? ' (' + handValue(dealerHand) + ')' : '';
+    }
+
+    function checkGame() {
+        let player = handValue(playerHand);
+        let dealer = handValue(dealerHand);
+        if (player > 21) {
+            document.getElementById('message').textContent = 'You bust! Dealer wins.';
+            gameOver = true;
+        } else if (dealer > 21) {
+            document.getElementById('message').textContent = 'Dealer busts! You win!';
+            gameOver = true;
+        } else if (gameOver) {
+            if (player > dealer) document.getElementById('message').textContent = 'You win!';
+            else if (player < dealer) document.getElementById('message').textContent = 'Dealer wins!';
+            else document.getElementById('message').textContent = "It's a tie!";
+        }
+    }
+
+    function dealerTurn() {
+        while (handValue(dealerHand) < 17) {
+            dealerHand.push(deck.pop());
+        }
+        gameOver = true;
+        render();
+        checkGame();
+    }
+
+    function startGame() {
+    deck = createDeck();
+    playerHand = [deck.pop(), deck.pop()];
+    playerHand2 = null;
+    activeHand = 1;
+    dealerHand = [deck.pop(), deck.pop()];
+    gameOver = false;
+    document.getElementById('message').textContent = '';
+    render();
+    }
+
+    document.getElementById('double').onclick = function() {
+        if (gameOver || playerHand.length !== 2) return;
+        // Double Down: player gets one card, then stands
+        playerHand.push(deck.pop());
+        render();
+        if (handValue(playerHand) > 21) {
+            gameOver = true;
+            render();
+            checkGame();
+        } else {
+            dealerTurn();
+        }
+    };
+
+    document.getElementById('hit').onclick = function() {
+        if (gameOver) return;
+        if (playerHand2) {
+            // If split, hit on the active hand
+            if (activeHand === 1) {
+                playerHand2.push(deck.pop());
+                render();
+                if (handValue(playerHand2) > 21) {
+                    // Move to original hand if split hand busts
+                    activeHand = 2;
+                    render();
+                }
+            } else {
+                playerHand.push(deck.pop());
+                render();
+                if (handValue(playerHand) > 21) {
+                    // Both hands played, dealer's turn
+                    dealerTurn();
+                }
+            }
+        } else {
+            playerHand.push(deck.pop());
+            render();
+            if (handValue(playerHand) > 21) {
+                gameOver = true;
+                render();
+                checkGame();
+            }
+        }
+    };
+    document.getElementById('stand').onclick = function() {
+        if (gameOver) return;
+        if (playerHand2) {
+            if (activeHand === 1) {
+                // Move to original hand
+                activeHand = 2;
+                render();
+            } else {
+                dealerTurn();
+            }
+        } else {
+            dealerTurn();
+        }
+    };
+    document.getElementById('restart').onclick = function() {
+        startGame();
+    };
+
+    document.getElementById('split').onclick = function() {
+        if (gameOver || playerHand.length !== 2 || playerHand2) return;
+        // Only allow split if both cards are the same value
+        let v1 = playerHand[0].value, v2 = playerHand[1].value;
+        if (v1 !== v2) {
+            document.getElementById('message').textContent = 'You can only split with two cards of the same value!';
+            return;
+        }
+        playerHand2 = [playerHand.pop()];
+        playerHand.push(deck.pop());
+        playerHand2.push(deck.pop());
+        activeHand = 1;
+        render();
+    };
+
+    startGame();
+    </script>
+</body>
+</html>
