@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Twin VR Viewer</title>
+  <style>
+    html,body { margin:0; height:100%; background:#111; }
+    body { overflow:hidden; }
+  </style>
+</head>
+<body>
+  <!-- WebXR VRButton will appear here -->
+  <script type="module">
+    import * as THREE from './lib/three.module.js';
+    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
+    import { VRButton } from './lib/examples/jsm/webxr/VRButton.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdddddd); // Light grey background
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(VRButton.createButton(renderer));
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    camera.position.set(0, 1.6, 3);
+
+    // Load sample.glb
+    const loader = new GLTFLoader();
+    loader.load('./sample.glb', (gltf) => {
+      scene.add(gltf.scene);
+      gltf.scene.scale.set(2, 2, 2);
+      gltf.scene.position.set(0, 0, -1);
+    });
+
+    // Lighting
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 4); // Brighter directional light
+    directionalLight.position.set(0, 2, 2).normalize();
+    scene.add(directionalLight);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Add ambient light for softer shadows
+    scene.add(ambientLight);
+
+    // Animate
+    function animate() {
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    renderer.setAnimationLoop(animate);
+
+    // Responsive resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
