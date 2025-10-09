@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Digital Twin — AR (static model) with Shadows</title>
+
+
+  <!-- Silence favicon 404s -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>">
+
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    #msg{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#222;color:#fff;padding:6px 12px;border-radius:6px;z-index:10}
+    #hint{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);background:#fff3;color:#111;padding:8px 14px;border-radius:6px;z-index:10}
+    #arButtonWrap{position:fixed;right:12px;top:12px;z-index:10}
+    #reset{position:fixed;right:12px;bottom:12px;z-index:10}
+    button{font:600 14px/1 system-ui;padding:.5rem .7rem;border-radius:.6rem;border:0;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div id="msg" role="status" aria-live="polite">Booting…</div>
+  <div id="arButtonWrap" hidden><button id="arBtn">Enter AR</button></div>
+  <div id="hint" hidden>Move to find a surface. Tap to place.</div>
+  <button id="reset" hidden>Reset</button>
+
+  <noscript>
+    <div style="background:#c00;color:#fff;padding:18px 12px;font-size:1.2em;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;">
+      JavaScript is disabled or failed to load. This page requires JavaScript to display the 3D model.
+    </div>
+  </noscript>
+
+  <div id="fatal-error" style="display:none;background:#c00;color:#fff;padding:18px 12px;font-size:1.2em;text-align:center;position:fixed;top:0;left:0;right:0;z-index:9999;"></div>
+
+  <script type="module">
+    // If script fails to run in 5 seconds, show a fatal error message
+    setTimeout(()=>{
+      if (!document.body.querySelector('canvas')) {
+        const fatal = document.getElementById('fatal-error');
+        fatal.textContent = 'Error: The 3D viewer failed to load. This may be due to missing files, unsupported browser, or a script error.';
+        fatal.style.display = 'block';
+      }
+    }, 5000);
+  import * as THREE from './lib/three.module.js';
+    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
+    import { RoomEnvironment } from './lib/examples/jsm/environments/RoomEnvironment.js';
+
+    // --- UI helpers ---
+    const msg = document.getElementById('msg');
+    const say  = (t,p=false)=>{ msg.textContent=t; if(!p) setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; }, 2500); };
+    const hint = document.getElementById('hint');
+    const arBtnWrap = document.getElementById('arButtonWrap');
+    const arBtn = document.getElementById('arBtn');
+    const resetBtn = document.getElementById('reset');
+
+    const onHttps = location.protocol==='https:' || location.hostname==='localhost';
+    if (!onHttps) say('Use HTTPS or localhost or the camera will be blocked.', true);
+
+    // Warn for in-app browsers (WebViews like Grok/IG)
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('; wv;') || ua.includes('grok') || ua.includes('instagram') || ua.includes('fbav') || ua.includes('tiktok')) {
+      say('Open in Chrome or Samsung Internet. In-app browsers break WebXR.', true);
+    }
+
+    // --- Renderer + scene (desktop defaults) ---
+    const scene = new THREE.Scene();               // Keep transparent in AR (no background set)
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;  // Nicer PBR on desktop
+    renderer.toneMappingExposure = 1.3;
+    renderer.physicallyCorrectLights = true;             // PBR on desktop
+    renderer.setClearAlpha(0);                           // Camera passthrough in AR
+    document.body.appendChild(renderer.domElement);
+
+    // Shadows on (desktop + AR)
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Desktop IBL
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+    scene.environment = envTex;
+
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x333355, 1.0);
+    const dir  = new THREE.DirectionalLight(0xffffff, 2.2);
+    dir.position.set(1,2,1);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(512,512);   // raise to 1024 if you’ve got GPU headroom
+    dir.shadow.camera.near = 0.01;
+    dir.shadow.camera.far  = 10;
+    dir.shadow.normalBias  = 0.02;     // reduce shadow acne
+    const amb  = new THREE.AmbientLight(0xffffff, 0.18);
+    scene.add(hemi, dir, amb);
+
+    // Desktop ground: visible, receives shadows
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(10,10),
+      new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.85 })
+    );
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = -0.001;      // slight offset to prevent z-fighting
+    ground.receiveShadow = true;
+    ground.visible = false;          // show only in desktop fallback
+    scene.add(ground);
+
+    // Reticle (unlit so it’s always bright over camera feed)
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.12,0.14,48,1),
+      new THREE.MeshBasicMaterial({ color:0x00ff88, toneMapped:false })
+    );
+    reticle.rotation.x = -Math.PI/2;
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // Desktop camera + orbit controls
+    let camera = null, controls = null;
+
+    // --- Load GLB (static) ---
+    let srcModel = null;
+    new GLTFLoader().load('./sample.glb', gltf=>{
+      srcModel = gltf.scene;
+
+      // Desktop PBR tweaks + shadow casting
+      srcModel.traverse(o=>{
+        if (o.isMesh){
+          o.castShadow = true;
+          o.receiveShadow = false;
+          if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 1.2;
+        }
+      });
+
+      say('Model loaded.');
+      if (camera) addDesktopModel();
+    }, undefined, err=>{ console.error(err); say('Failed to load ./sample.glb', true); });
+
+    // --- Center (XZ), base-align (use min.y), uniform scale ---
+    const TARGET_SIZE_M = 0.4; // longest side (meters) after scaling
+    function centerBaseAndScale(object, targetMeters){
+      const box = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const center = new THREE.Vector3(); box.getCenter(center);
+
+      // center XZ for nice orbit/rotation
+      object.position.x -= center.x;
+      object.position.z -= center.z;
+
+      // sit on local Y=0 (use min.y so the base touches the plane)
+      object.position.y -= box.min.y;
+
+      // uniform scale to target
+      const s = targetMeters / Math.max(size.x, size.y, size.z || 1);
+      object.scale.setScalar(s);
+
+      // fix post-scale tiny drift
+      const box2 = new THREE.Box3().setFromObject(object);
+      object.position.y -= box2.min.y;
+    }
+
+    // --- Desktop viewer: add model, show ground, frame camera ---
+    function addDesktopModel(){
+      const root = srcModel.clone(true);
+      centerBaseAndScale(root, TARGET_SIZE_M);
+      scene.add(root);
+      ground.visible = true;
+
+      const nd = TARGET_SIZE_M;
+      const dist = nd*0.6/Math.tan((60*Math.PI)/360);
+      camera.position.set(dist, dist*0.5, dist);
+      camera.near = Math.max(0.01, nd*0.001);
+      camera.far = dist*10;
+      camera.updateProjectionMatrix();
+    }
+
+    // --- AR material conversion (mobile-safe, unlit but can still cast shadows) ---
+    const AR_MATERIAL = 'basic'; // switch to 'lambert' if you want lit shading
+    function cloneForAR(src){
+      const root = src.clone(true);
+      root.traverse(o=>{
+        if (!o.isMesh || !o.material) return;
+
+        o.castShadow = true;   // so it casts onto the catcher
+        o.receiveShadow = false;
+
+        if (AR_MATERIAL === 'lambert'){
+          const mat = new THREE.MeshLambertMaterial({
+            color: (o.material.color && o.material.color.isColor) ? o.material.color.clone() : new THREE.Color(0xffffff),
+            map: o.material.map || null,
+            emissive: (o.material.emissive && o.material.emissive.isColor) ? o.material.emissive.clone() : new THREE.Color(0x101010),
+            emissiveMap: o.material.emissiveMap || null,
+            side: o.material.side
+          });
+          if (mat.map && 'colorSpace' in mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+          if (mat.emissiveMap && 'colorSpace' in mat.emissiveMap) mat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+          o.material = mat;
+        } else {
+          const mat = new THREE.MeshBasicMaterial({
+            color: (o.material.color && o.material.color.isColor) ? o.material.color.clone() : new THREE.Color(0xffffff),
+            map: o.material.map || null,
+            toneMapped:false
+          });
+          if (mat.map && 'colorSpace' in mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+          o.material = mat;
+        }
+      });
+      return root;
+    }
+
+    // --- Shadow catcher for AR (transparent plane that only shows shadows) ---
+    function makeARShadowCatcher(size=2){
+      const catcher = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.ShadowMaterial({ opacity: 0.35 })
+      );
+      catcher.rotation.x = -Math.PI/2;
+      catcher.receiveShadow = true;
+      catcher.position.y = -0.001; // tiny offset to avoid z-fighting
+      return catcher;
+    }
+
+    // --- Desktop bootstrap ---
+    function startFallbackViewer(){
+      if (camera) return;
+      camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 1000);
+      camera.position.set(0.8,0.6,1.2);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true; controls.dampingFactor = 0.08;
+      controls.minDistance = 0.2; controls.maxDistance = 5; controls.maxPolarAngle = Math.PI*0.49;
+
+      if (srcModel) addDesktopModel();
+
+      (function loop(){
+        requestAnimationFrame(loop);
+        controls.update();
+        renderer.render(scene,camera);
+      })();
+    }
+
+    // --- AR state ---
+    let session=null, refSpace=null, viewerSpace=null, hitTestSource=null, placeRequested=false;
+    const placed=[], xrAnchors=[];
+    let headlight=null;
+    const _tmp = new THREE.Vector3();
+
+    // --- Enter AR ---
+    async function enterAR(){
+      try{
+        if (!('xr' in navigator) || !await navigator.xr.isSessionSupported('immersive-ar')){
+          say('AR not supported. Showing fallback.', true); startFallbackViewer(); return;
+        }
+        session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures:['hit-test'],
+          optionalFeatures:['anchors','dom-overlay'],
+          domOverlay:{ root: document.body }
+        });
+      } catch(e){
+        console.error(e); say('Failed to start AR. Check camera permission.', true); startFallbackViewer(); return;
+      }
+
+      arBtnWrap.hidden = true; hint.hidden = false;
+
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType('local');
+      await renderer.xr.setSession(session);
+
+      // Mobile render settings (brighter, no IBL)
+      renderer.toneMapping = THREE.ReinhardToneMapping;
+      renderer.physicallyCorrectLights = false;
+      scene.environment = null;
+      renderer.toneMappingExposure = 1.8;
+
+      // S22-friendly intensities
+      dir.intensity  = 3.2;
+      hemi.intensity = 1.5;
+      amb.intensity  = 0.35;
+      dir.castShadow = true;
+
+      refSpace   = renderer.xr.getReferenceSpace();
+      viewerSpace = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+      // Headlight that follows camera (no shadows for perf)
+      headlight = new THREE.PointLight(0xffffff, 8.0, 40.0);
+      headlight.decay = 1;
+      headlight.castShadow = false;
+      scene.add(headlight);
+
+      // Tap controller
+      const controller = renderer.xr.getController(0);
+      controller.addEventListener('select', ()=>{ placeRequested = true; });
+      scene.add(controller);
+
+      resetBtn.hidden = true;
+
+      session.addEventListener('end', ()=>{
+        hint.hidden = true; arBtnWrap.hidden = false;
+        renderer.xr.enabled = false;
+
+        // Restore desktop defaults
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.physicallyCorrectLights = true;
+        scene.environment = envTex;
+        renderer.toneMappingExposure = 1.3;
+
+        if (headlight){ scene.remove(headlight); headlight=null; }
+      });
+
+      renderer.setAnimationLoop(onXRFrame);
+    }
+
+    // --- AR frame loop ---
+    function onXRFrame(time, frame){
+      const xrCam = renderer.xr.getCamera();
+      if (!renderer.xr.getSession()) return;
+
+      // Keep headlight at camera
+      if (headlight){ xrCam.getWorldPosition(_tmp); headlight.position.copy(_tmp); }
+
+      // Hit test + reticle + placement
+      if (hitTestSource && refSpace && srcModel){
+        const hits = frame.getHitTestResults(hitTestSource);
+        if (hits.length){
+          const hit = hits[0];
+          const pose = hit.getPose(refSpace);
+          if (pose){
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+
+            if (placeRequested){
+              // Wrapper aligned to plane
+              const wrapper = new THREE.Group();
+              wrapper.matrix.copy(reticle.matrix);
+              wrapper.matrix.decompose(wrapper.position, wrapper.quaternion, wrapper.scale);
+
+              // Clone for AR, base-align, scale
+              const obj = cloneForAR(srcModel);
+              centerBaseAndScale(obj, TARGET_SIZE_M);
+              wrapper.add(obj);
+
+              // Shadow catcher under the model
+              wrapper.add(makeARShadowCatcher(2.0));
+
+              scene.add(wrapper);
+              placed.push({ object: wrapper });
+
+              // Optional anchor (stability)
+              if (hit.createAnchor){
+                hit.createAnchor(pose.transform).then(anchor=>{
+                  xrAnchors.push({anchor, object:wrapper});
+                }).catch(()=>{});
+              }
+
+              placeRequested = false;
+              hint.hidden = true;
+              resetBtn.hidden = false;
+              resetBtn.onclick = ()=>{
+                placed.forEach(p=>scene.remove(p.object));
+                placed.length = 0;
+                xrAnchors.length = 0;
+                resetBtn.hidden = true;
+                hint.hidden = false;
+              };
+              say('Placed. Tap again to place another.');
+            }
+          }
+        } else {
+          reticle.visible = false;
+        }
+      }
+
+      // Keep anchors synced
+      if (xrAnchors.length && refSpace){
+        for (const e of xrAnchors){
+          const apose = frame.getPose(e.anchor.anchorSpace, refSpace);
+          if (apose){
+            e.object.matrix.fromArray(apose.transform.matrix);
+            e.object.matrix.decompose(e.object.position,e.object.quaternion,e.object.scale);
+          }
+        }
+      }
+
+      renderer.render(scene, xrCam);
+    }
+
+    // --- Init: AR availability vs desktop fallback ---
+    (async ()=>{
+      if (!onHttps){ say('HTTPS/localhost required for camera. Showing fallback.', true); startFallbackViewer(); return; }
+      try{
+        if (!('xr' in navigator) || !await navigator.xr.isSessionSupported('immersive-ar')){
+          say('WebXR not available. Showing fallback.', true); startFallbackViewer(); return;
+        }
+        say('WebXR available. Tap Enter AR.', true);
+        arBtnWrap.hidden = false;
+        arBtn.addEventListener('click', enterAR);
+      } catch {
+        say('WebXR check failed. Showing fallback.', true); startFallbackViewer();
+      }
+    })();
+
+    // --- Resize ---
+    addEventListener('resize', ()=>{
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      if (camera){ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+    });
+  </script>
+</body>
+</html>

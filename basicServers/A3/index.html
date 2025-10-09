@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fjalla+One&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game 551 Fall 2025 Main Page</title>
+    <style>
+        body {
+            font-family: 'Fjalla One', 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #e0e7ff 0%, #f8fafc 100%);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 650px;
+            margin: 60px auto;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 6px 32px rgba(0,0,0,0.10);
+            padding: 40px 36px 32px 36px;
+            position: relative;
+        }
+        h1 {
+            color: #1e293b;
+            font-size: 2.2em;
+            margin-bottom: 18px;
+            letter-spacing: 1px;
+            font-family: 'Fjalla One', Arial, sans-serif;
+            text-align: center;
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 24px 0;
+        }
+        li {
+            margin: 20px 0;
+            padding: 0;
+        }
+        a {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 1.18em;
+            font-weight: 500;
+            padding: 12px 24px;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #f1f5f9 60%, #e0e7ff 100%);
+            box-shadow: 0 2px 8px rgba(30,41,59,0.04);
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+            display: inline-block;
+            font-family: 'Fjalla One', Arial, sans-serif;
+        }
+        a:hover {
+            background: linear-gradient(90deg, #dbeafe 60%, #a5b4fc 100%);
+            color: #1e293b;
+            box-shadow: 0 4px 16px rgba(37,99,235,0.10);
+        }
+        .qr-section {
+            margin:32px 0; text-align:center;
+        }
+        .qr-section img {
+            max-width:200px; width:100%; border:1px solid #ccc; border-radius:8px;
+            box-shadow: 0 2px 12px rgba(30,41,59,0.08);
+        }
+        .powered {
+            margin-top:40px; color:#888; font-size:0.95em;
+        }
+        #update-info {
+            color:#888; font-size:0.95em; margin-top:10px; text-align:center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Mark Jordan's Game 551 Project Page</h1>
+        <div class="qr-section">
+            <p>Scan this QR code for mobile site:</p>
+            <img src="./qrcode.png" alt="QR Code" />
+        </div>
+        <h2 style="margin-top:32px; color:#334155; font-size:1.3em; letter-spacing:1px;">AR and VR Projects</h2>
+        <ul>
+            <li><a href="digitalTwin/android-digital-twin.html">Android AR Digital Twin Viewer</a></li>
+            <li><a href="digitalTwin/ios-digital-twin.html">iOS Digital Twin Viewer</a></li>
+            <li><a href="digitalTwin/threejs-test.html">Desktop/All-Browser WebGL Test (Spinning Cube)</a></li>
+            <li><a href="digitalTwin/ios-smoke-test.html">iOS WebGL1 Compatibility Test + Quick Look</a></li>
+            <li><a href="digitalTwin/vr-viewer.html">VR Viewer (WebXR)</a></li>
+            <li><a href="digitalTwin/castle-vr-viewer.html">Castle VR Viewer (WebXR)</a></li>
+            <li><a href="digitalTwin/robot1-universal-viewer.html">Spring Bot with Sound (AR/VR/3D)</a></li>
+            <!-- Add more links to other pages or features here -->
+        </ul>
+        <h2 style="margin-top:32px; color:#334155; font-size:1.3em; letter-spacing:1px;">Games</h2>
+        <ul>
+            <li><a href="DiceGame/dice.html">Dice Game</a></li>
+            <li><a href="BlackJack/BJ.html">Black Jack</a></li>
+        </ul>
+        <div style="margin:32px 0; text-align:center;">
+        </div>
+                <p style="margin-top:40px; color:#888; font-size:0.9em;">Powered by GitHub Pages</p>
+                <div id="update-info" style="color:#888; font-size:0.9em; margin-top:10px; text-align:center;"></div>
+                <script>
+                    // Show the last updated time using the document's last modified property
+                    const updateDiv = document.getElementById('update-info');
+                    if (updateDiv) {
+                        const dt = new Date(document.lastModified);
+                        updateDiv.textContent = 'Last updated: ' + dt.toLocaleString();
+                    }
+                </script>
+    </div>
+</body>
+</html>

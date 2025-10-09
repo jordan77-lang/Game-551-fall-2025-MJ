@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Digital Twin — iOS Model Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22/>">
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    #msg{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#222;color:#fff;padding:6px 12px;border-radius:6px;z-index:10}
+    #fatal-error{position:fixed;left:0;right:0;bottom:0;background:#c00;color:#fff;padding:8px 10px;display:none;z-index:20}
+  </style>
+</head>
+<body>
+  <div id="msg" role="status" aria-live="polite">Booting…</div>
+  <div id="fatal-error" aria-hidden="true"></div>
+  <div id="toolbar" style="position:fixed;right:12px;top:12px;z-index:30">
+    <a id="ql" rel="ar" href="sample.usdz" style="display:none;background:#0a84ff;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:600">View in AR</a>
+  </div>
+
+  <script type="module">
+    import * as THREE from './lib/three.module.js';
+    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
+
+    const msg = document.getElementById('msg');
+    const fatal = document.getElementById('fatal-error');
+    const say = (t)=>{ msg.textContent = t; };
+    const showFatal = (t)=>{ fatal.textContent = t; fatal.style.display='block'; };
+
+  const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints>1);
+  const qlBtn = document.getElementById('ql');
+    const RendererClass = (isiOS && THREE.WebGL1Renderer) ? THREE.WebGL1Renderer : THREE.WebGLRenderer;
+
+    // Quick sanity canvas test (WebGL1)
+    const testCanvas = document.createElement('canvas');
+    const testGl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+    if (!testGl) {
+      showFatal('Error: WebGL context creation failed. Close other tabs/apps and retry.');
+      say('WebGL unavailable');
+      throw new Error('WebGL not available');
+    }
+
+    // Show Quick Look link on iOS
+    if (isiOS && qlBtn) {
+      qlBtn.style.display = 'inline-block';
+      say('Tap "View in AR" to open Quick Look');
+    }
+
+    say('Initializing renderer…');
+    let renderer;
+    try {
+      renderer = new RendererClass({ antialias: !isiOS, alpha: false, powerPreference: 'high-performance' });
+    } catch (err) {
+      showFatal('Renderer creation failed: ' + (err && err.message ? err.message : String(err)));
+      say('Renderer failed');
+      throw err;
+    }
+
+    renderer.setPixelRatio(isiOS ? 1 : Math.min(devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Scene + camera
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
+    camera.position.set(0, 1.2, 2.5);
+
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1, 0);
+    controls.update();
+
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 3.0);
+    dir.position.set(3, 10, 10);
+    scene.add(dir);
+
+    // Load model
+    const loader = new GLTFLoader();
+    say('Loading model…');
+    loader.load('./sample.glb', gltf => {
+      const o = gltf.scene;
+      o.traverse((n)=>{ if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+      scene.add(o);
+      // Fit scale/position (simple heuristic)
+      o.position.set(0,0,0);
+      o.scale.set(1,1,1);
+      say('Model loaded');
+    }, undefined, err => {
+      console.error(err);
+      showFatal('Failed to load ./sample.glb — ' + (err.message||err));
+      say('Model load failed');
+    });
+
+    // Render loop
+    function render() {
+      requestAnimationFrame(render);
+      renderer.render(scene, camera);
+    }
+    render();
+
+    // Resize
+    window.addEventListener('resize', ()=>{
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // If the page is visible but no canvas for >5s, show fatal
+    setTimeout(()=>{
+      if (!document.body.querySelector('canvas')) {
+        showFatal('Error: The 3D viewer failed to load a canvas.');
+      }
+    }, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Castle VR Viewer</title>
+  <style>
+    html,body { margin:0; height:100%; background:#ddd; }
+    body { overflow:hidden; }
+  </style>
+</head>
+<body>
+  <!-- WebXR VRButton will appear here -->
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/three.module.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/GLTFLoader.js';
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/OrbitControls.js';
+    import { VRButton } from 'https://cdn.jsdelivr.net/gh/mesquite-mocap/mesquite.cc/build-static/VRButton.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdddddd); // Light grey background
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(VRButton.createButton(renderer));
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    camera.position.set(0, 1.6, 3);
+
+    // Load castle.glb
+    const loader = new GLTFLoader();
+    loader.load('./castle.glb', (gltf) => {
+      scene.add(gltf.scene);
+      gltf.scene.scale.set(5, 5, 5);
+      gltf.scene.position.set(0, 0, -5);
+    });
+
+  // Lighting
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 8); // Even brighter directional light
+  directionalLight.position.set(0, 4, 4).normalize();
+  scene.add(directionalLight);
+
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.5); // Stronger ambient light
+  scene.add(ambientLight);
+
+    // Animate
+    function animate() {
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    renderer.setAnimationLoop(animate);
+
+    // Responsive resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
