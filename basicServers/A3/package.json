@@ -1,0 +1,20 @@
+{
+  "name": "a3",
+  "version": "1.0.0",
+  "description": "Static site hosting with HTTPS for Assignment 3",
+  "main": "https.js",
+  "scripts": {
+    "start": "node https.js",
+    "dev": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "express": "^4.19.2",
+    "greenlock-express": "^2.7.18",
+    "greenlock-store-fs": "^3.0.5"
+  }
+}
