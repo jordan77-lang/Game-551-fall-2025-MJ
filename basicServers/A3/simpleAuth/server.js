@@ -51,7 +51,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 
 if (require.main === module) { server.listen(8080); }// Instead do export the app:
-else{ module.exports = server; }
+else{ module.exports = app; }
 
 
 console.log("server running at http://localhost:8080")
