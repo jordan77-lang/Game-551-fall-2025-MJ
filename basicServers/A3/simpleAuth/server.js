@@ -50,7 +50,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 //app.listen(8080);
 
 
-if (require.main === module) { server.listen(8080); }// Instead do export the app:
+if (require.main === module) { app.listen(8080); }// Instead do export the app:
 else{ module.exports = app; }
 
 
