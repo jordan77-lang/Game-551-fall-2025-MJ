@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robot1 Universal Viewer (AR/VR/3D)</title>
+  <style>
+    html,body { margin:0; height:100%; background:#ddd; color:#111; font-family:sans-serif; }
+    body { overflow:hidden; }
+    #mode-select { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10; background:#222; border-radius:8px; padding:12px 24px; box-shadow:0 2px 8px #0008; }
+    #mode-select button { margin:0 8px; padding:8px 18px; border-radius:6px; border:0; background:#0a84ff; color:#fff; font-weight:600; cursor:pointer; font-size:1em; }
+    #mode-select button.active { background:#fff; color:#0a84ff; }
+    #msg { position:fixed; left:50%; top:12px; transform:translateX(-50%); background:#222; color:#fff; padding:6px 12px; border-radius:6px; z-index:20; }
+    #fatal-error { position:fixed; left:0; right:0; bottom:0; background:#c00; color:#fff; padding:8px 10px; display:none; z-index:30; }
+  </style>
+</head>
+<body>
+  <div id="mode-select">
+    <button id="btn-3d" class="active">3D View</button>
+    <button id="btn-ar">AR</button>
+    <button id="btn-vr">VR</button>
+  </div>
+  <div id="msg" role="status" aria-live="polite">Booting…</div>
+  <div id="fatal-error" aria-hidden="true"></div>
+
+  <script type="module">
+    import * as THREE from './lib/three.module.js';
+    import { GLTFLoader } from './lib/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from './lib/examples/jsm/controls/OrbitControls.js';
+    import { VRButton } from './lib/examples/jsm/webxr/VRButton.js';
+
+    const msg = document.getElementById('msg');
+    const fatal = document.getElementById('fatal-error');
+    const say = (t)=>{ msg.textContent = t; };
+    const showFatal = (t)=>{ fatal.textContent = t; fatal.style.display='block'; };
+
+    // Mode buttons
+    const btn3d = document.getElementById('btn-3d');
+    const btnAR = document.getElementById('btn-ar');
+    const btnVR = document.getElementById('btn-vr');
+    let currentMode = '3d';
+
+    // Scene setup
+    let renderer, scene, camera, controls, model, vrButton, arSession, arPlaced = false;
+    let reticle, hitTestSource, refSpace, viewerSpace;
+    // VR sound effect
+    let robotSound, listener;
+
+    function clearScene() {
+      if (renderer && renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+      if (vrButton && vrButton.parentNode) vrButton.parentNode.removeChild(vrButton);
+      if (arSession) { arSession.end(); arSession = null; }
+      msg.textContent = 'Booting…';
+      fatal.style.display = 'none';
+      arPlaced = false;
+    }
+
+    function setupRenderer() {
+      renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+      renderer.physicallyCorrectLights = true;
+      renderer.setClearAlpha(0); // transparent for desktop/AR; VR will override to 1.0
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
+    }
+
+    function setupScene() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xdddddd); // desktop default
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 1000);
+      camera.position.set(0, 1.2, 2.5);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 1, 0);
+      controls.update();
+
+      // Lights
+      const sun = new THREE.DirectionalLight(0xffffff, 4.5);
+      sun.position.set(5, 10, 2);
+      sun.castShadow = true;
+      sun.shadow.mapSize.width = 2048;
+      sun.shadow.mapSize.height = 2048;
+      sun.shadow.camera.near = 0.5;
+      sun.shadow.camera.far = 50;
+      sun.shadow.camera.left = -5;
+      sun.shadow.camera.right = 5;
+      sun.shadow.camera.top = 5;
+      sun.shadow.camera.bottom = -5;
+      scene.add(sun);
+
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x88bb88, 0.7);
+      scene.add(hemi);
+
+      const amb = new THREE.AmbientLight(0xffffff, 0.35);
+      scene.add(amb);
+
+      // Ground
+      const groundGeo = new THREE.PlaneGeometry(20, 20);
+      const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = 0;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const fill = new THREE.DirectionalLight(0xffffff, 1.2);
+      fill.position.set(0, 2, 4);
+      fill.castShadow = false;
+      scene.add(fill);
+    }
+
+    function loadModel(path, onLoaded) {
+      const loader = new GLTFLoader();
+      loader.load(path, gltf => {
+        model = gltf.scene;
+        model.traverse((n)=>{
+          if (n.isMesh) {
+            n.castShadow = true;
+            n.receiveShadow = false;
+            if (n.material) n.material.needsUpdate = true;
+          }
+        });
+        scene.add(model);
+        if (onLoaded) onLoaded();
+        say('Model loaded');
+      }, undefined, err => {
+        console.error(err);
+        showFatal('Failed to load ' + path + ' — ' + (err.message||err));
+        say('Model load failed');
+      });
+    }
+
+    function animate() {
+      if (currentMode === 'vr') {
+        renderer.setAnimationLoop(() => {
+          controls.update();
+          renderer.render(scene, camera);
+        });
+      } else {
+        function loop() {
+          requestAnimationFrame(loop);
+          controls.update();
+          renderer.render(scene, camera);
+        }
+        loop();
+      }
+    }
+
+    // 3D View
+    function start3D() {
+      clearScene();
+      setupRenderer();
+      setupScene();
+      loadModel('./Robot1.glb');
+      animate();
+    }
+
+    // VR Mode
+    function startVR() {
+      clearScene();
+      setupRenderer();
+      setupScene();
+      camera.position.set(0, 1.6, 3.5);
+
+      // Opaque clear for XR so the sky sphere shows
+      renderer.setClearAlpha(1.0);
+
+      // Audio
+      listener = new THREE.AudioListener();
+      camera.add(listener);
+      robotSound = new THREE.Audio(listener);
+      const audioLoader = new THREE.AudioLoader();
+      audioLoader.load('./robot.mp3', function(buffer) {
+        robotSound.setBuffer(buffer);
+        robotSound.setLoop(false);
+        robotSound.setVolume(0.8);
+      }, undefined, function(err) {
+        console.error('Failed to load robot.mp3:', err);
+        showFatal('Failed to load robot.mp3');
+      });
+
+      // Sky sphere (created immediately; texture may attach later)
+      const geometry = new THREE.SphereGeometry(50, 64, 32);
+      geometry.scale(-1, 1, 1); // view from inside
+
+      const skyMaterial = new THREE.MeshBasicMaterial({
+        color: 0x223366,
+        side: THREE.BackSide,
+        depthWrite: false, // critical on Quest
+        fog: false
+      });
+
+      const skySphere = new THREE.Mesh(geometry, skyMaterial);
+      skySphere.renderOrder = -1;
+      skySphere.frustumCulled = false;
+      skySphere.name = 'SkySphere';
+
+      const loader = new THREE.TextureLoader();
+      loader.load('./sky.jpeg', function(texture) {
+        if (texture.colorSpace !== undefined) {
+          texture.colorSpace = THREE.SRGBColorSpace;
+        }
+        // No reflection mapping, no legacy encoding
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+
+        skyMaterial.map = texture;
+        skyMaterial.color.set(0xffffff);
+        skyMaterial.needsUpdate = true;
+
+        // If not in XR, show as scene background for desktop preview
+        if (!renderer.xr.isPresenting) {
+          scene.background = texture;
+        }
+      }, undefined, function(err) {
+        console.error('Failed to load sky.jpeg:', err);
+        showFatal('Failed to load sky.jpeg');
+        skyMaterial.map = null;
+        skyMaterial.color.set(0x223366);
+        skyMaterial.needsUpdate = true;
+        scene.background = new THREE.Color(0x223366);
+      });
+
+      // Model
+      loadModel('./Robot1.glb', () => {
+        if (model) model.position.set(0, 0, -1.5);
+
+        renderer.xr.enabled = true;
+        vrButton = VRButton.createButton(renderer);
+        document.body.appendChild(vrButton);
+
+        // Add/remove sky sphere with the VR session
+        renderer.xr.addEventListener('sessionstart', () => {
+          if (!scene.getObjectByName('SkySphere')) {
+            scene.add(skySphere);
+            console.log('Sky sphere added to scene in VR');
+          }
+        });
+        renderer.xr.addEventListener('sessionend', () => {
+          if (scene.getObjectByName('SkySphere')) {
+            scene.remove(skySphere);
+          }
+        });
+
+        // Controller select -> play sound if you hit the model
+        const raycaster = new THREE.Raycaster();
+        function onSelect() {
+          if (!model) return;
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          for (let i = 0; i < 2; i++) {
+            const controller = renderer.xr.getController(i);
+            if (!controller) continue;
+            const tempMatrix = new THREE.Matrix4().identity().extractRotation(controller.matrixWorld);
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+            const intersects = raycaster.intersectObjects(meshes, true);
+            if (intersects.length > 0 && robotSound && robotSound.buffer) {
+              if (robotSound.context && robotSound.context.state === 'suspended') robotSound.context.resume();
+              robotSound.stop(); robotSound.play();
+              break;
+            }
+          }
+        }
+        for (let i = 0; i < 2; i++) {
+          const c = renderer.xr.getController(i);
+          if (c) c.addEventListener('select', onSelect);
+        }
+
+        // Animation loop
+        renderer.setAnimationLoop((time, frame) => {
+          controls.update();
+          renderer.render(scene, camera);
+
+          // Always center sky sphere on camera in VR to prevent parallax
+          if (renderer.xr.isPresenting && scene.getObjectByName('SkySphere') && camera) {
+            const sky = scene.getObjectByName('SkySphere');
+            sky.position.copy(camera.position);
+          }
+
+          // Hand tracking pinch-to-sound (unchanged)
+          const session = renderer.xr.getSession();
+          if (!session || !model) return;
+          const meshes = [];
+          model.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
+          for (const inputSource of session.inputSources) {
+            if (inputSource.hand) {
+              let thumbTip, indexTip;
+              try {
+                thumbTip = inputSource.hand.get('thumb-tip');
+                indexTip = inputSource.hand.get('index-finger-tip');
+              } catch(e) { thumbTip = null; indexTip = null; }
+              if (
+                thumbTip && indexTip &&
+                thumbTip.transform && indexTip.transform &&
+                thumbTip.transform.position && indexTip.transform.position
+              ) {
+                const tp = thumbTip.transform.position, ip = indexTip.transform.position;
+                const thumbPos = new THREE.Vector3(tp.x, tp.y, tp.z);
+                const indexPos = new THREE.Vector3(ip.x, ip.y, ip.z);
+                const pinchDist = thumbPos.distanceTo(indexPos);
+                if (pinchDist < 0.025) {
+                  const direction = new THREE.Vector3(0,0,-1);
+                  if (indexTip.transform.orientation) {
+                    const q = indexTip.transform.orientation;
+                    direction.applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
+                  }
+                  raycaster.ray.origin.copy(indexPos);
+                  raycaster.ray.direction.copy(direction);
+                  const hits = raycaster.intersectObjects(meshes, true);
+                  if (hits.length > 0 && robotSound && robotSound.buffer && !robotSound.isPlaying) {
+                    if (robotSound.context && robotSound.context.state === 'suspended') robotSound.context.resume();
+                    robotSound.stop(); robotSound.play();
+                  }
+                }
+              }
+            }
+          }
+        });
+      });
+    }
+
+    // AR Mode (WebXR immersive-ar)
+    async function startAR() {
+      clearScene();
+      setupRenderer();
+      setupScene();
+      loadModel('./Robot1.glb', () => { say('Initializing AR…'); });
+
+      if (!('xr' in navigator)) { showFatal('WebXR not supported on this device/browser.'); return; }
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (!supported) { showFatal('AR not supported on this device/browser.'); return; }
+        arSession = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures:['hit-test'],
+          optionalFeatures:['dom-overlay'],
+          domOverlay:{ root: document.body }
+        });
+      } catch (e) {
+        showFatal('Failed to start AR session: ' + e.message);
+        return;
+      }
+
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType('local');
+      await renderer.xr.setSession(arSession);
+
+      reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.12,0.14,48,1),
+        new THREE.MeshBasicMaterial({ color:0x00ff88, toneMapped:false })
+      );
+      reticle.rotation.x = -Math.PI/2;
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
+
+      refSpace = renderer.xr.getReferenceSpace();
+      viewerSpace = await arSession.requestReferenceSpace('viewer');
+      hitTestSource = await arSession.requestHitTestSource({ space: viewerSpace });
+
+      renderer.setAnimationLoop((time, frame) => {
+        const xrCam = renderer.xr.getCamera();
+        if (hitTestSource && refSpace && model) {
+          const hits = frame.getHitTestResults(hitTestSource);
+          if (hits.length) {
+            const pose = hits[0].getPose(refSpace);
+            if (pose) {
+              reticle.visible = true;
+              reticle.matrix.fromArray(pose.transform.matrix);
+              if (!arPlaced && frame.session.inputSources.length) {
+                frame.session.inputSources[0].gamepad &&
+                frame.session.inputSources[0].gamepad.buttons[0].pressed && placeModel();
+              }
+            }
+          } else {
+            reticle.visible = false;
+          }
+        }
+        renderer.render(scene, xrCam);
+      });
+
+      function placeModel() {
+        if (arPlaced || !model) return;
+        model.position.setFromMatrixPosition(reticle.matrix);
+        arPlaced = true;
+        say('Placed!');
+      }
+      window.addEventListener('touchend', placeModel);
+      arSession.addEventListener('end', () => { window.removeEventListener('touchend', placeModel); });
+    }
+
+    // Button handlers
+    btn3d.onclick = () => { currentMode = '3d'; btn3d.classList.add('active'); btnAR.classList.remove('active'); btnVR.classList.remove('active'); start3D(); };
+    btnAR.onclick = () => { currentMode = 'ar'; btnAR.classList.add('active'); btn3d.classList.remove('active'); btnVR.classList.remove('active'); startAR(); };
+    btnVR.onclick = () => { currentMode = 'vr'; btnVR.classList.add('active'); btn3d.classList.remove('active'); btnAR.classList.remove('active'); startVR(); };
+
+    // Start in 3D mode
+    start3D();
+
+    // Responsive resize
+    window.addEventListener('resize', () => {
+      if (renderer) {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        if (camera) {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+        }
+      }
+    });
+  </script>
+</body>
+</html>
