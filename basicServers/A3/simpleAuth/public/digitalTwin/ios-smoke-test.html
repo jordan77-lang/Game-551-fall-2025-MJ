@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>iOS WebGL1 Smoke Test + Quick Look</title>
+  <style>
+    html,body{margin:0;height:100%;background:#202428;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    #status{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:10;background:#111c;color:#fff;padding:6px 10px;border-radius:8px;font-size:14px}
+    #links{position:fixed;left:10px;bottom:10px;z-index:10;background:#0008;color:#fff;padding:6px 8px;border-radius:6px;font-size:12px}
+    #links a{color:#8cf;text-decoration:none;margin-right:8px}
+    #err{position:fixed;left:0;right:0;bottom:0;max-height:40vh;overflow:auto;background:#100;color:#f88;
+         font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px;display:none;border-top:1px solid #400;z-index:10}
+    #toolbar{position:fixed;right:12px;top:12px;display:flex;gap:8px;z-index:11}
+    .btn{font:600 14px/1 system-ui;padding:.55rem .8rem;border-radius:.6rem;border:0;cursor:pointer}
+    .primary{background:#0a84ff;color:#fff}
+  </style>
+</head>
+<body>
+  <div id="status">Booting…</div>
+  <div id="toolbar">
+    <!-- iOS Quick Look button (works if sample.usdz is present and over trusted HTTPS) -->
+    <a id="ql" rel="ar" href="sample.usdz" class="btn primary" hidden>View in AR</a>
+  </div>
+  <div id="links">
+    check: <a href="./lib/three.module.js">three</a>
+  </div>
+  <div id="err"></div>
+
+  <script type="module">
+    import * as THREE from './lib/three.module.js';
+
+    const status = document.getElementById('status');
+    const errBox = document.getElementById('err');
+    const qlBtn = document.getElementById('ql');
+    const say = (t)=>status.textContent=t;
+    const showErr = (e)=>{ errBox.style.display='block'; errBox.textContent += (e?.message||e?.reason||e)+'\n'; };
+
+    window.addEventListener('error', (e)=>showErr(e.error||e.message));
+    window.addEventListener('unhandledrejection', (e)=>showErr(e.reason||'Unhandled promise rejection'));
+
+    const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints>1);
+    if (isiOS) qlBtn.hidden = false;
+
+    // Force WebGL1 on iOS (some iOS/Safari builds flake on WebGL2)
+    const RendererClass = (isiOS && THREE.WebGL1Renderer) ? THREE.WebGL1Renderer : THREE.WebGLRenderer;
+
+    // Hard fail if WebGL isn’t available
+    const testCanvas = document.createElement('canvas');
+    const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+    if (!gl){ say('❌ WebGL unavailable'); showErr('WebGL context creation failed'); throw new Error('WebGL not available'); }
+
+    say('✓ WebGL available — initializing…');
+
+    // Renderer (opaque canvas; set a non-black clear color so “black screen” is obvious)
+    const renderer = new RendererClass({ antialias:true, alpha:false, powerPreference:'default' });
+    renderer.setClearColor(0x202428, 1);
+    renderer.setPixelRatio(isiOS ? 1 : Math.min(devicePixelRatio, 2)); // cap on iOS = fewer tile memory issues
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Scene & camera
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 100);
+    camera.position.z = 2;
+
+    // Cube
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshNormalMaterial());
+    scene.add(cube);
+
+    // Animate
+    let frames = 0;
+    function tick(){
+      frames++;
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.013;
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    setTimeout(()=>{ say(frames>0 ? '✓ Rendering OK' : '❌ No frames rendered'); }, 1500);
+
+    // Resize
+    addEventListener('resize', ()=>{
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
