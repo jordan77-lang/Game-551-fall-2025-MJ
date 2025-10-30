@@ -2,6 +2,9 @@
 <html>
   <head>
   <meta content="width=device-width, initial-scale=1, max-width=device-width, max-scale=1" name="viewport">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fjalla+One&display=swap" rel="stylesheet">
    <!-- Compiled and minified CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -9,6 +12,95 @@
     <!-- Compiled and minified JavaScript -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    <style>
+      body {
+        font-family: 'Fjalla One', 'Segoe UI', Arial, sans-serif;
+        background: linear-gradient(135deg, #e0e7ff 0%, #f8fafc 100%);
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+      }
+      #header {
+        color: #1e293b;
+        font-size: 2.2em;
+        margin-bottom: 50px;
+        margin-top: 60px;
+        letter-spacing: 1px;
+        font-family: 'Fjalla One', Arial, sans-serif;
+        text-align: center;
+      }
+      #loginRegisterWrapper {
+        max-width: 450px;
+        margin: 40px auto;
+        background: #fff;
+        border-radius: 18px;
+        box-shadow: 0 6px 32px rgba(0,0,0,0.10);
+        padding: 20px;
+      }
+      .tabs {
+        background-color: transparent;
+      }
+      .tabs .tab a {
+        color: #64748b;
+        font-family: 'Fjalla One', Arial, sans-serif;
+        font-size: 1.1em;
+        letter-spacing: 0.5px;
+      }
+      .tabs .tab a:hover {
+        color: #2563eb;
+      }
+      .tabs .tab a.active {
+        color: #2563eb;
+      }
+      .tabs .indicator {
+        background-color: #2563eb;
+      }
+      .btn {
+        background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%);
+        box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+        font-family: 'Fjalla One', Arial, sans-serif;
+        letter-spacing: 0.5px;
+        border-radius: 8px;
+      }
+      .btn:hover {
+        background: linear-gradient(90deg, #1d4ed8 0%, #1e40af 100%);
+        box-shadow: 0 4px 12px rgba(37,99,235,0.4);
+      }
+      input[type=email]:focus:not([readonly]),
+      input[type=password]:focus:not([readonly]) {
+        border-bottom: 1px solid #2563eb;
+        box-shadow: 0 1px 0 0 #2563eb;
+      }
+      input[type=email]:focus:not([readonly]) + label,
+      input[type=password]:focus:not([readonly]) + label {
+        color: #2563eb;
+      }
+      input.valid[type=email]:not([readonly]),
+      input.valid[type=password]:not([readonly]) {
+        border-bottom: 1px solid #10b981;
+        box-shadow: 0 1px 0 0 #10b981;
+      }
+      input.invalid[type=email]:not([readonly]),
+      input.invalid[type=password]:not([readonly]) {
+        border-bottom: 1px solid #ef4444;
+        box-shadow: 0 1px 0 0 #ef4444;
+      }
+      .modal {
+        border-radius: 12px;
+      }
+      .modal h4 {
+        font-family: 'Fjalla One', Arial, sans-serif;
+        color: #1e293b;
+      }
+      .modal-footer .btn-flat {
+        color: #2563eb;
+        font-family: 'Fjalla One', Arial, sans-serif;
+      }
+      label {
+        font-family: 'Fjalla One', Arial, sans-serif;
+        font-size: 0.95em;
+      }
+    </style>
     <script>
       
       var start = function(){
@@ -47,7 +139,7 @@
   </head>
     <body onload='start()'>
     <h1 id='header' style='margin-bottom:50px;text-align:center'>
-        My App!
+        Mark Jordan's Fancy login/register page
     </h1>
         
 
@@ -112,6 +204,9 @@
       <a href="#!" class="modal-close waves-effect waves-green btn-flat">OK</a>
     </div>
   </div>
+    <div style="text-align:center; padding:20px; color:#888; font-size:0.9em; font-family: 'Fjalla One', Arial, sans-serif;">
+      Powered by Express.js HTTPS Server with Authentication
+    </div>
     </body>
             
 </html>
