@@ -1,0 +1,17 @@
+{
+  "name": "vr-social-platform",
+  "version": "1.0.0",
+  "description": "Multi-user VR social platform with Gaussian splats and hand tracking",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["vr", "webxr", "multiplayer", "gaussian-splat"],
+  "author": "Mark Jordan",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.2"
+  }
+}

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VR Social - Landing</title>
+  <style>
+    body { margin:0; overflow:hidden; font-family: Arial, sans-serif; }
+    #ui { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.75); color:#fff; padding: 14px; border-radius: 10px; width: 320px; z-index: 2; }
+    #ui h2 { margin: 0 0 8px 0; font-size: 18px; }
+    #ui label { font-size: 13px; color: #cbd5e1 }
+    #ui input[type="color"], #ui select { width: 100%; margin: 6px 0 12px 0; padding: 6px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
+    #rooms { max-height: 180px; overflow: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px; padding: 8px; background: #0b1323; }
+    .room { display:flex; justify-content: space-between; align-items:center; background:#111827; padding:8px; border-radius:6px; margin-bottom:6px }
+    .room button { background: linear-gradient(90deg,#2563eb,#1d4ed8); color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer }
+    #enterButtons { display:flex; gap:8px; }
+    #enterButtons a, #enterButtons button { flex:1; text-align:center; padding:10px 12px; background: linear-gradient(90deg,#10b981,#059669); color:#fff; border:none; border-radius:8px; cursor:pointer; text-decoration:none }
+    #mirrorNote { font-size: 12px; color: #9ca3af }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h2>Welcome</h2>
+    <div>
+      <label>Display Name</label>
+      <input id="displayName" placeholder="Your name" style="width:100%; padding:6px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0" />
+      <!-- Ready Player Me is the only avatar option now -->
+      <div style="display:flex; gap:8px; margin:8px 0 12px 0;">
+        <button id="rpmButton" style="flex:1; background: linear-gradient(90deg,#ec4899,#f43f5e); color:#fff; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Create Avatar (Ready Player Me)</button>
+        <button id="rpmClear" title="Clear RPM avatar" style="background:#334155; color:#e2e8f0; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Clear</button>
+      </div>
+      <p id="mirrorNote">You're in the Cube Room lobby. Create your avatar and see it in the mirror. Then pick another room below to join others.</p>
+    </div>
+    <div>
+      <h2>Available Rooms</h2>
+      <div id="rooms">Loading rooms…</div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { Reflector } from 'three/addons/objects/Reflector.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+    import { VRButton } from 'three/addons/webxr/VRButton.js';
+    import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+    const state = {
+      name: localStorage.getItem('vr_name') || '',
+      avatarUrl: localStorage.getItem('vr_rpm_avatar') || ''
+    };
+
+    // Populate UI from saved state
+    document.getElementById('displayName').value = state.name;
+  // No color/style controls anymore
+
+    // Save on changes
+    const saveState = () => {
+      state.name = document.getElementById('displayName').value.trim() || 'Guest';
+      localStorage.setItem('vr_name', state.name);
+      if (state.avatarUrl) localStorage.setItem('vr_rpm_avatar', state.avatarUrl);
+    };
+    ['displayName'].forEach(id => {
+      document.getElementById(id).addEventListener('change', () => {
+        saveState();
+      });
+    });
+
+    // Navigation helpers
+    const goTo = (room, scene) => {
+      saveState();
+      const params = new URLSearchParams({ room, name: state.name });
+      if (state.avatarUrl) params.set('avatarUrl', state.avatarUrl);
+      if (scene) params.set('scene', scene);
+      window.location.href = `multiplayer.html?${params.toString()}`;
+    };
+
+    // Fetch rooms
+    async function loadRooms() {
+      try {
+        const res = await fetch('/api/rooms');
+        const rooms = await res.json();
+        const container = document.getElementById('rooms');
+        container.innerHTML = '';
+        rooms.forEach(r => {
+          // Filter out cube-room since that's the lobby we're already in
+          if (r.id === 'cube-room') return;
+          const div = document.createElement('div');
+          div.className = 'room';
+          const name = document.createElement('div');
+          name.textContent = r.name;
+          const btn = document.createElement('button');
+          btn.textContent = 'Join';
+          btn.onclick = () => goTo(r.id, r.scene);
+          div.appendChild(name);
+          div.appendChild(btn);
+          container.appendChild(div);
+        });
+      } catch (e) {
+        document.getElementById('rooms').textContent = 'No rooms found';
+      }
+    }
+    loadRooms();
+
+    // Ready Player Me integration (iframe modal)
+    const rpmButton = document.getElementById('rpmButton');
+    const rpmClear = document.getElementById('rpmClear');
+
+    // Create overlay elements
+    const overlay = document.createElement('div');
+    overlay.id = 'rpmOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:none;';
+    const frame = document.createElement('iframe');
+    frame.id = 'rpmFrame';
+    frame.allow = 'camera *; microphone *; clipboard-write';
+    frame.style.cssText = 'width:100%;height:100%;border:0;';
+    overlay.appendChild(frame);
+    document.body.appendChild(overlay);
+
+    const rpmSubdomain = 'demo'; // replace with your subdomain if you have one
+    function openRpm() {
+      // Load creator per RPM quickstart
+      frame.src = `https://${rpmSubdomain}.readyplayer.me/avatar?frameApi`;
+      overlay.style.display = 'block';
+      frame.hidden = false;
+    }
+    function closeRpm() { overlay.style.display = 'none'; frame.src = ''; }
+
+    rpmButton.onclick = (e) => { e.preventDefault(); openRpm(); };
+    rpmClear.onclick = (e) => {
+      e.preventDefault();
+      state.avatarUrl = '';
+      localStorage.removeItem('vr_rpm_avatar');
+      rpmRoot.clear();
+    };
+
+    function parseRpmEvent(event) {
+      try { return JSON.parse(event.data); } catch { return null; }
+    }
+    function isRpmOrigin(event) {
+      try { return new URL(event.origin).hostname.endsWith('readyplayer.me'); } catch { return false; }
+    }
+    function subscribe(event) {
+      if (!isRpmOrigin(event)) return;
+      const json = parseRpmEvent(event);
+      if (json?.source !== 'readyplayerme') return;
+
+      if (json.eventName === 'v1.frame.ready') {
+        frame.contentWindow.postMessage(
+          JSON.stringify({ target: 'readyplayerme', type: 'subscribe', eventName: 'v1.**' }),
+          '*'
+        );
+      }
+      if (json.eventName === 'v1.avatar.exported') {
+        const url = json.data?.url;
+        if (url) {
+          state.avatarUrl = url;
+          localStorage.setItem('vr_rpm_avatar', url);
+          loadRpmAvatar(url);
+        }
+        frame.hidden = true;
+        closeRpm();
+      }
+      if (json.eventName === 'v1.user.set') {
+        // Optional: handle user id if needed
+        // console.log('RPM user set', json.data?.id);
+      }
+    }
+    window.addEventListener('message', subscribe);
+    document.addEventListener('message', subscribe);
+
+    // Three.js preview scene (Cube Room GLTF + mirror + RPM avatar)
+    let scene, camera, renderer, controls, rpmRoot;
+    let keys = {}; // For WASD movement
+    let moveSpeed = 0.1;
+    let controller1, controller2, controllerGrip1, controllerGrip2;
+    let teleportMarker, tempMatrix = new THREE.Matrix4();
+    
+    // VR Controllers for grab and teleport
+    let grabbed = null;
+    let teleportRay = null;
+    
+    // Physics world using Cannon.js
+    let world, ballBody, ballMesh;
+    
+    initPreview();
+
+    function initPreview() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b1020);
+
+      camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 1.6, 3);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      // Add VR Button
+      document.body.appendChild(VRButton.createButton(renderer));
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 1.3, 0);
+      controls.update();
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+      dir.position.set(5, 10, 5);
+      scene.add(dir);
+
+      // Load Cube Room GLTF
+      const gltfLoader = new GLTFLoader();
+      const draco = new DRACOLoader();
+      draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+      gltfLoader.setDRACOLoader(draco);
+      gltfLoader.load('Rooms/cube-room/cube-room.gltf', (g) => {
+        const env = g.scene;
+        env.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(env);
+      }, undefined, (e) => console.warn('Failed to load Cube Room', e));
+
+      // Load classical mirror on the floor
+      gltfLoader.load('models/classical_mirror.glb', (g) => {
+        const mirror = g.scene;
+        // Compute bounding box to find bottom
+        const box = new THREE.Box3().setFromObject(mirror);
+        const yOffset = -box.min.y; // Move up so bottom sits at y=0
+        mirror.position.set(0, yOffset, -2.5);
+        mirror.scale.setScalar(1);
+        scene.add(mirror);
+        console.log('Mirror loaded, bottom at y=0');
+      }, undefined, (e) => console.warn('Failed to load mirror', e));
+
+      // RPM avatar root
+      rpmRoot = new THREE.Group();
+      rpmRoot.name = 'MyAvatar';
+      scene.add(rpmRoot);
+      if (state.avatarUrl) loadRpmAvatar(state.avatarUrl);
+
+      // Soccer ball with physics
+      setupSoccerBall(gltfLoader);
+
+      // Keyboard controls for WASD
+      window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+      window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // VR controllers for grab and teleport (set up after renderer ready)
+      setupVRControllers();
+
+      renderer.setAnimationLoop(() => {
+        updateMovement();
+        updatePhysics();
+        updateTeleport();
+        renderer.render(scene, camera);
+      });
+    }
+
+    function updateMovement() {
+      // WASD movement
+      if (keys['w']) camera.position.z -= moveSpeed;
+      if (keys['s']) camera.position.z += moveSpeed;
+      if (keys['a']) camera.position.x -= moveSpeed;
+      if (keys['d']) camera.position.x += moveSpeed;
+    }
+
+    // VR Controllers for grab and teleport
+    function setupVRControllers() {
+      const controllerModelFactory = new XRControllerModelFactory();
+
+      // Controller 1 (left)
+      controller1 = renderer.xr.getController(0);
+      controller1.addEventListener('selectstart', onSelectStart);
+      controller1.addEventListener('selectend', onSelectEnd);
+      scene.add(controller1);
+
+      controllerGrip1 = renderer.xr.getControllerGrip(0);
+      controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
+      scene.add(controllerGrip1);
+
+      // Controller 2 (right)
+      controller2 = renderer.xr.getController(1);
+      controller2.addEventListener('selectstart', onSelectStart);
+      controller2.addEventListener('selectend', onSelectEnd);
+      scene.add(controller2);
+
+      controllerGrip2 = renderer.xr.getControllerGrip(1);
+      controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
+      scene.add(controllerGrip2);
+
+      // Teleport marker (ring on floor)
+      const geometry = new THREE.RingGeometry(0.2, 0.3, 32);
+      const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, opacity: 0.7, transparent: true });
+      teleportMarker = new THREE.Mesh(geometry, material);
+      teleportMarker.rotation.x = -Math.PI / 2;
+      teleportMarker.visible = false;
+      scene.add(teleportMarker);
+
+      // Teleport ray line
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -5)]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+      teleportRay = new THREE.Line(lineGeo, lineMat);
+      teleportRay.visible = false;
+      controller1.add(teleportRay);
+    }
+
+    function onSelectStart(event) {
+      const controller = event.target;
+      // Try to grab ball
+      if (ballMesh) {
+        const dist = controller.position.distanceTo(ballMesh.position);
+        if (dist < 0.3) {
+          grabbed = ballMesh;
+          if (ballBody) {
+            ballBody.velocity.set(0, 0, 0);
+            ballBody.angularVelocity.set(0, 0, 0);
+          }
+          return;
+        }
+      }
+      // Otherwise show teleport ray
+      if (teleportRay) teleportRay.visible = true;
+    }
+
+    function onSelectEnd(event) {
+      if (grabbed) {
+        // Throw ball
+        const controller = event.target;
+        const direction = new THREE.Vector3();
+        controller.getWorldDirection(direction);
+        if (ballBody) ballBody.velocity.copy(direction.multiplyScalar(5));
+        grabbed = null;
+      } else if (teleportMarker && teleportMarker.visible) {
+        // Teleport camera
+        camera.position.x = teleportMarker.position.x;
+        camera.position.z = teleportMarker.position.z;
+      }
+      if (teleportRay) teleportRay.visible = false;
+      if (teleportMarker) teleportMarker.visible = false;
+    }
+
+    function updateTeleport() {
+      if (!renderer.xr.isPresenting || !controller1) return;
+      try {
+        if (grabbed && ballMesh && ballBody) {
+          // Follow controller
+          const pos = new THREE.Vector3();
+          controller1.getWorldPosition(pos);
+          ballBody.position.copy(pos);
+          ballMesh.position.copy(pos);
+        }
+        if (teleportRay && teleportRay.visible) {
+          // Raycast to find teleport target
+          const raycaster = new THREE.Raycaster();
+          tempMatrix.identity().extractRotation(controller1.matrixWorld);
+          raycaster.ray.origin.setFromMatrixPosition(controller1.matrixWorld);
+          raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+          const intersects = raycaster.intersectObjects(scene.children, true);
+          if (intersects.length > 0) {
+            const hit = intersects[0].point;
+            teleportMarker.position.set(hit.x, 0.01, hit.z);
+            teleportMarker.visible = true;
+          } else {
+            teleportMarker.visible = false;
+          }
+        }
+      } catch (e) {
+        console.warn('Teleport update error:', e);
+      }
+    }
+
+    // Physics world using Cannon.js (CDN)
+    function setupSoccerBall(loader) {
+      // Load Cannon.js from CDN (use the bundled version that exposes CANNON globally)
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js';
+      script.onload = () => {
+        // Initialize physics world
+        world = new CANNON.World();
+        world.gravity.set(0, -9.82, 0);
+
+        // Ground plane
+        const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+        groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+        world.addBody(groundBody);
+
+        // Ball body
+        ballBody = new CANNON.Body({
+          mass: 0.45, // Soccer ball ~450g
+          shape: new CANNON.Sphere(0.11),
+          linearDamping: 0.3,
+          angularDamping: 0.3
+        });
+        ballBody.position.set(0, 0.5, 0);
+        world.addBody(ballBody);
+
+        // Load ball mesh
+        loader.load('Rooms/soccer_ball.glb', (g) => {
+          ballMesh = g.scene;
+          ballMesh.scale.setScalar(1); // Use model's actual scale
+          ballMesh.position.copy(ballBody.position);
+          scene.add(ballMesh);
+          console.log('Soccer ball loaded at', ballMesh.position);
+        }, undefined, (e) => {
+          console.warn('Failed to load soccer ball GLB, using fallback sphere', e);
+          // Fallback to a simple sphere if GLTF fails
+          const geometry = new THREE.SphereGeometry(0.11, 32, 32);
+          const material = new THREE.MeshStandardMaterial({ color: 0xffffff, map: createSoccerTexture() });
+          ballMesh = new THREE.Mesh(geometry, material);
+          ballMesh.position.copy(ballBody.position);
+          scene.add(ballMesh);
+        });
+      };
+      document.head.appendChild(script);
+    }
+
+    function updatePhysics() {
+      if (!world) return;
+      try {
+        world.step(1 / 60);
+        if (ballMesh && ballBody) {
+          ballMesh.position.copy(ballBody.position);
+          ballMesh.quaternion.copy(ballBody.quaternion);
+        }
+      } catch (e) {
+        console.warn('Physics update error:', e);
+      }
+    }
+
+    function createSoccerTexture() {
+      // Simple black/white pattern for fallback ball
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 512, 512);
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(256, 256, 200, 0, Math.PI * 2);
+      ctx.fill();
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    function loadRpmAvatar(url) {
+      rpmRoot.clear();
+      const gltfLoader = new GLTFLoader();
+      const draco = new DRACOLoader();
+      draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+      gltfLoader.setDRACOLoader(draco);
+      gltfLoader.load(url, (g) => {
+        const model = g.scene;
+        model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        // Place roughly in front of mirror for desktop, but in VR we attach to camera
+        rpmRoot.position.set(0, 0, -1.2);
+        rpmRoot.add(model);
+        
+        // In VR, parent avatar to camera so user sees themselves in the mirror
+        renderer.xr.addEventListener('sessionstart', () => {
+          // Move avatar to follow camera/XR rig
+          rpmRoot.position.set(0, -0.3, -0.5);
+          camera.add(rpmRoot);
+        });
+        renderer.xr.addEventListener('sessionend', () => {
+          // Return to scene root for desktop view
+          scene.add(rpmRoot);
+          rpmRoot.position.set(0, 0, -1.2);
+        });
+      }, undefined, (e) => console.warn('Failed to load RPM avatar', e));
+    }
+  </script>
+</body>
+</html>
