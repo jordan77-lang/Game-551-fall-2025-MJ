@@ -29,6 +29,21 @@
         <button id="rpmButton" style="flex:1; background: linear-gradient(90deg,#ec4899,#f43f5e); color:#fff; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Create Avatar (Ready Player Me)</button>
         <button id="rpmClear" title="Clear RPM avatar" style="background:#334155; color:#e2e8f0; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Clear</button>
       </div>
+      <div style="display:flex; gap:8px; margin:6px 0 12px 0; align-items:center;">
+        <input id="relayUrl" placeholder="ws://localhost:4000" style="flex:1; padding:6px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0" />
+        <button id="relayConnect" style="background:#2563eb; color:#fff; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Connect</button>
+        <button id="relayDisconnect" style="background:#334155; color:#e2e8f0; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Disconnect</button>
+        <button id="openJointMap" style="background:#0ea5e9; color:#022; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Map Joints</button>
+      </div>
+      <div style="margin-bottom:8px; color:#9ca3af; font-size:13px">
+        Relay status: <span id="relayStatus">disconnected</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <label style="color:#cbd5e1; font-size:13px">Enable IK</label>
+        <input type="checkbox" id="ikEnable" />
+        <label style="color:#cbd5e1; font-size:13px">Weight</label>
+        <input id="ikWeight" type="range" min="0" max="1" step="0.05" value="0.9" style="width:120px" />
+      </div>
       <p id="mirrorNote">You're in the Cube Room lobby. Create your avatar and see it in the mirror. Then pick another room below to join others.</p>
     </div>
     <div>
@@ -46,13 +61,17 @@
     }
   </script>
   <script type="module">
+    console.log('Landing page script starting...');
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { Reflector } from 'three/addons/objects/Reflector.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-    import { VRButton } from 'three/addons/webxr/VRButton.js';
-    import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+  import { VRButton } from 'three/addons/webxr/VRButton.js';
+  import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+  import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+    
+    console.log('Three.js and addons loaded successfully');
 
     const state = {
       name: localStorage.getItem('vr_name') || '',
@@ -89,6 +108,7 @@
       try {
         const res = await fetch('/api/rooms');
         const rooms = await res.json();
+        roomsCache = rooms;
         const container = document.getElementById('rooms');
         container.innerHTML = '';
         rooms.forEach(r => {
@@ -105,6 +125,7 @@
           div.appendChild(btn);
           container.appendChild(div);
         });
+        if (watchPanel) updateWatchMenuRooms(roomsCache);
       } catch (e) {
         document.getElementById('rooms').textContent = 'No rooms found';
       }
@@ -178,23 +199,442 @@
     window.addEventListener('message', subscribe);
     document.addEventListener('message', subscribe);
 
+    // Relay UI wiring (connect to a joint relay WebSocket)
+    try {
+      const relayInput = document.getElementById('relayUrl');
+      const relayConnectBtn = document.getElementById('relayConnect');
+      const relayDisconnectBtn = document.getElementById('relayDisconnect');
+  const savedRelay = localStorage.getItem('vr_relay_url') || 'ws://localhost:4000';
+      if (relayInput) relayInput.value = savedRelay;
+      if (relayConnectBtn) relayConnectBtn.onclick = () => {
+        const url = (relayInput && relayInput.value) ? relayInput.value.trim() : savedRelay;
+        try { localStorage.setItem('vr_relay_url', url); } catch(e){}
+        startJointRelay(url);
+        updateRelayStatus('connecting...');
+      };
+      if (relayDisconnectBtn) relayDisconnectBtn.onclick = () => { stopJointRelay(); updateRelayStatus('disconnected'); };
+      // Auto-connect to saved relay by default (safe no-op if nothing listening)
+      if (savedRelay) {
+        // delay a bit to ensure three.js init functions exist
+        setTimeout(() => { try { startJointRelay(savedRelay); } catch(e){} }, 1000);
+      }
+    } catch (e) { console.warn('Failed to wire relay UI', e); }
+    // Wire joint mapping modal
+    try {
+      const openMapBtn = document.getElementById('openJointMap');
+      if (openMapBtn) openMapBtn.onclick = () => { openJointMappingModal(); };
+    } catch (e) { console.warn('Failed to wire joint mapping button', e); }
+
+    // IK UI wiring moved below where IK state is declared to avoid temporal-deadzone errors
+
     // Three.js preview scene (Cube Room GLTF + mirror + RPM avatar)
     let scene, camera, renderer, controls, rpmRoot;
+  let rpmBoneMap = {}; // map of detected bones for avatar retargeting
     let keys = {}; // For WASD movement
     let moveSpeed = 0.1;
-    let controller1, controller2, controllerGrip1, controllerGrip2;
-    let teleportMarker, tempMatrix = new THREE.Matrix4();
+  let controller1, controller2, controllerGrip1, controllerGrip2;
+  let teleportMarker, tempMatrix = new THREE.Matrix4();
     
     // VR Controllers for grab and teleport
-    let grabbed = null;
+      let grabbed = null;
+      let grabbedController = null;
     let teleportRay = null;
     
     // Physics world using Cannon.js
-    let world, ballBody, ballMesh;
+    let world, ballBody, ballMesh, groundBody;
+
+    // Hands
+    let hand1, hand2;
+
+    // Helper to pick left/right hands based on wrist x relative to camera
+    function pickHands() {
+      const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+      const wrists = [];
+      [hand1, hand2].forEach(h => {
+        const w = getJointWorldPosition(h, 'wrist');
+        if (w) wrists.push({ hand: h, wrist: w });
+      });
+      if (wrists.length === 2) {
+        // left is the one with smaller x relative to camera
+        return wrists[0].wrist.x < wrists[1].wrist.x ? { left: wrists[0].hand, right: wrists[1].hand } : { left: wrists[1].hand, right: wrists[0].hand };
+      }
+      if (wrists.length === 1) {
+        const only = wrists[0];
+        return (only.wrist.x < camPos.x) ? { left: only.hand, right: null } : { left: null, right: only.hand };
+      }
+      // fallback: assume hand1 is left, hand2 is right
+      return { left: hand1 || null, right: hand2 || null };
+    }
+
+    // Watch-menu state
+    let watchPanel = null;
+    let watchButtons = [];
+    let roomsCache = [];
+    let leftSqueezeStart = 0;
     
+    // VR teleportation offset
+    let baseReferenceSpace = null;
+    let vrOffset = new THREE.Vector3();
+  // Hand-gesture teleport
+  let leftHandTeleportRay = null;
+  let prevRightPinch = false;
+  let markerPrevVisible = false;
+  // Debug / tuning parameters (exposed via in-VR panel)
+  let rightPinchThreshold = 0.03; // meters
+  let pinchThreshold = 0.04; // meters for general pinching
+  let backFacingDotThreshold = -0.25; // dot threshold for back-of-hand detection (dot < threshold means back facing)
+  let throwScalar = 14; // multiplier for conversion of hand velocity to ball throw
+    
+  // Hand tracking gesture state
+  let isLeftPointing = false;
+  let handTeleportMarker = null;    console.log('About to call initPreview()...');
+    // Hand grab state (supports either hand)
+    let handGrab = {
+      hand: null,       // reference to hand1 or hand2
+      jointName: null,   // joint used for grab (e.g., 'index-finger-tip')
+      prevPos: null,     // previous world position for velocity calc
+      vel: new THREE.Vector3()
+    };
+    // Room bounds (fallback) - will try to compute from loaded GLTFs; otherwise use 2.5m radius
+    let roomBounds = { min: new THREE.Vector3(-2.5, -1, -2.5), max: new THREE.Vector3(2.5, 3, 2.5) };
+  let roomWalls = []; // CANNON bodies for static room walls
+
+    // --- Joint relay (WebSocket) and retargeting tunables ---
+    let relaySocket = null;
+    let relayConnected = false;
+  let relayShouldReconnect = false;
+  let relayReconnectAttempts = 0;
+  let relayReconnectTimer = null;
+    const RELAY_URL_KEY = 'vr_relay_url';
+    const JOINT_MAP_KEY = 'vr_joint_map';
+    const RETARGET_WEIGHTS_KEY = 'vr_retarget_weights';
+
+    // Retarget weights (persisted)
+    let retargetWeights = {
+      head: 0.7,
+      neck: 0.6,
+      leftWrist: 0.6,
+      rightWrist: 0.6,
+      hips: 0.5
+    };
+
+    try {
+      const saved = localStorage.getItem(RETARGET_WEIGHTS_KEY);
+      if (saved) Object.assign(retargetWeights, JSON.parse(saved));
+    } catch (e) {}
+
+    // Map of joint name -> bone name (user overrides); loaded from localStorage if present
+    let jointNameMap = {};
+    try { jointNameMap = JSON.parse(localStorage.getItem(JOINT_MAP_KEY) || '{}'); } catch (e) { jointNameMap = {}; }
+
+    // track last seen joint names for mapping UI
+    const lastSeenJoints = new Set();
+
+    // last received joint positions (world space) keyed by joint name
+    const lastJointPositions = {};
+
+    // IK settings (persisted)
+    const IK_ENABLED_KEY = 'vr_ik_enabled';
+    const IK_WEIGHT_KEY = 'vr_ik_weight';
+    let ikEnabled = false;
+    let ikWeight = parseFloat(localStorage.getItem(IK_WEIGHT_KEY) || '0.9');
+    try { ikEnabled = localStorage.getItem(IK_ENABLED_KEY) === 'true'; } catch (e) { ikEnabled = false; }
+
+    // Wire IK UI controls (do this after ikEnabled/ikWeight exist)
+    try {
+      const ikChk = document.getElementById('ikEnable');
+      const ikSlider = document.getElementById('ikWeight');
+      if (ikChk) { ikChk.checked = !!ikEnabled; ikChk.onchange = () => { ikEnabled = !!ikChk.checked; try { localStorage.setItem(IK_ENABLED_KEY, ikEnabled ? 'true' : 'false'); } catch(e){} }; }
+      if (ikSlider) { ikSlider.value = (typeof ikWeight === 'number' ? ikWeight : 0.9); ikSlider.oninput = () => { ikWeight = parseFloat(ikSlider.value); try { localStorage.setItem(IK_WEIGHT_KEY, String(ikWeight)); } catch(e){} }; }
+    } catch (e) { console.warn('Failed to wire IK UI', e); }
+
+    function startJointRelay(url) {
+      if (!url) return;
+      // indicate we want an active connection
+      relayShouldReconnect = true;
+      relayReconnectAttempts = 0;
+      stopJointRelay();
+      try {
+        relaySocket = new WebSocket(url);
+        relaySocket.binaryType = 'arraybuffer';
+        relaySocket.onopen = () => { relayConnected = true; console.log('Joint relay connected to', url); };
+        relaySocket.onclose = (ev) => {
+          relayConnected = false;
+          relaySocket = null;
+          console.log('Joint relay disconnected', ev && ev.reason ? ev.reason : '');
+          updateRelayStatus('disconnected');
+          // attempt reconnect if desired
+          if (relayShouldReconnect) {
+            relayReconnectAttempts++;
+            const delay = Math.min(10000, 500 * Math.pow(2, Math.min(relayReconnectAttempts, 6)));
+            console.log('Attempting relay reconnect in', delay, 'ms (attempt', relayReconnectAttempts, ')');
+            relayReconnectTimer = setTimeout(() => { try { startJointRelay(url); } catch(e){} }, delay);
+            updateRelayStatus('reconnecting...');
+          }
+        };
+        relaySocket.onerror = (e) => { console.warn('Joint relay socket error', e); };
+        relaySocket.onmessage = (evt) => {
+          try {
+            const txt = typeof evt.data === 'string' ? evt.data : new TextDecoder().decode(evt.data);
+            const obj = JSON.parse(txt);
+            if (obj && obj.joints) handleJointFrame(obj);
+          } catch (e) { console.warn('Failed to parse relay frame', e); }
+        };
+        updateRelayStatus('connecting...');
+      } catch (e) { console.warn('Failed to start joint relay', e); }
+    }
+
+    function stopJointRelay() {
+      try { 
+        // prevent automatic reconnects when we intentionally stop
+        relayShouldReconnect = false;
+        if (relayReconnectTimer) { clearTimeout(relayReconnectTimer); relayReconnectTimer = null; }
+        if (relaySocket) { relaySocket.close(); relaySocket = null; relayConnected = false; }
+        updateRelayStatus('disconnected');
+      } catch (e) {}
+    }
+
+  function updateRelayStatus(text) {
+    try {
+      const el = document.getElementById('relayStatus');
+      if (el) el.textContent = text;
+      // enable/disable connect button based on state
+      const btnConnect = document.getElementById('relayConnect');
+      const btnDisconnect = document.getElementById('relayDisconnect');
+      if (btnConnect) btnConnect.disabled = (text === 'connecting...' || text === 'connected' || text === 'reconnecting...');
+      if (btnDisconnect) btnDisconnect.disabled = (text !== 'connected' && text !== 'reconnecting...');
+    } catch (e) {}
+  }
+
+    function handleJointFrame(frame) {
+      if (!frame || !frame.joints || !rpmRoot) return;
+      // record joint names for mapping UI
+      try { frame.joints.forEach(j => lastSeenJoints.add(j.name || j.name && j.name.toString())); } catch (e) {}
+      // Apply orientations for head/neck/wrists and optional hips position
+      frame.joints.forEach(j => {
+        const jn = (j.name || '').toLowerCase();
+        const mapped = jointNameMap[j.name] || j.name;
+        // parse quaternion and position
+        let q = null, p = null;
+        try {
+          if (j.q && j.q.length === 4) q = new THREE.Quaternion(j.q[0], j.q[1], j.q[2], j.q[3]);
+          if (j.p && j.p.length === 3) p = new THREE.Vector3(j.p[0], j.p[1], j.p[2]);
+        } catch (e) {}
+
+        // store last received positions for IK
+        try { if (p && j.name) lastJointPositions[j.name] = p.clone(); } catch (e) {}
+
+        // decide target bone
+        const bone = mapJointToBone(j.name || jn);
+        if (bone && q) {
+          // choose weight
+          let w = 0.6;
+          if (jn.includes('head')) w = retargetWeights.head || w;
+          else if (jn.includes('neck')) w = retargetWeights.neck || w;
+          else if (jn.includes('wrist') || jn.includes('hand')) {
+            if (jn.includes('left')) w = retargetWeights.leftWrist || w; else w = retargetWeights.rightWrist || w;
+          }
+          applyJointToBone(bone, q, w);
+        }
+
+        // optional hips/root position update (lightweight)
+        if (p && (jn.includes('hip') || jn.includes('pelvis') || jn === 'root')) {
+          try {
+            // convert world position (from sender) into scene/world coordinates - assume same origin
+            // Smoothly lerp rpmRoot position toward reported hip position (keep Y clamped to avoid sinking)
+            const target = p.clone();
+            rpmRoot.position.lerp(target, 0.15 * (retargetWeights.hips || 0.5));
+          } catch (e) {}
+        }
+      });
+    }
+
+    function mapJointToBone(jointName) {
+      if (!jointName || !rpmRoot) return null;
+      // allow user override mapping first
+      try {
+        if (jointNameMap && jointNameMap[jointName]) {
+          const byName = rpmRoot.getObjectByName(jointNameMap[jointName]);
+          if (byName) return byName;
+        }
+      } catch (e) {}
+      const n = jointName.toLowerCase();
+      // quick matches for common joints
+      const candidates = [];
+      rpmRoot.traverse(obj => { if (obj.isBone || obj.isSkinnedMesh || obj.isObject3D) { if (obj.name) candidates.push(obj); } });
+      // search for explicit wrist/hand/head/neck/hip substrings
+      const substrings = ['left wrist','left_wrist','leftwrist','l_wrist','left hand','lefthand','left_hand','left','right wrist','right_wrist','rightwrist','r_wrist','right hand','righthand','right_hand','head','neck','hip','pelvis','spine','chest','upperarm','lowerarm','forearm','shoulder'];
+      for (let s of substrings) {
+        if (n.includes(s.replace(/ /g, '').replace('_',''))) continue; // skip poorly normalized
+      }
+      // Candidate selection: choose first bone whose name includes any of the likely tokens
+      const tokens = [];
+      if (n.includes('left')) tokens.push('left','l','_l');
+      if (n.includes('right')) tokens.push('right','r','_r');
+      ['wrist','hand','head','neck','hip','pelvis','spine','chest','upperarm','lowerarm','forearm','shoulder'].forEach(t => tokens.push(t));
+      for (let c of candidates) {
+        const cn = (c.name || '').toLowerCase();
+        for (let t of tokens) {
+          if (cn.includes(t)) return c;
+        }
+      }
+      // fallback: try rpmBoneMap left/right wrist keys
+      if (n.includes('left') && rpmBoneMap.leftWrist) return rpmBoneMap.leftWrist;
+      if (n.includes('right') && rpmBoneMap.rightWrist) return rpmBoneMap.rightWrist;
+      return null;
+    }
+
+    function applyJointToBone(bone, jointWorldQ, weight = 0.6) {
+      if (!bone || !jointWorldQ) return;
+      try {
+        const parent = bone.parent || rpmRoot;
+        const parentWorldQ = new THREE.Quaternion();
+        parent.getWorldQuaternion(parentWorldQ);
+        const desiredLocal = parentWorldQ.clone().invert().multiply(jointWorldQ);
+        bone.quaternion.slerp(desiredLocal, weight);
+      } catch (e) { /* ignore */ }
+    }
+
+    // --- Joint mapping UI (modal) ---
+    function openJointMappingModal() {
+      // create modal if not exists
+      let modal = document.getElementById('jointMapModal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'jointMapModal';
+        modal.style.cssText = 'position:fixed;inset:10% 10% 10% 10%;background:rgba(2,6,23,0.95);color:#cbd5e1;padding:12px;border-radius:8px;z-index:10000;overflow:auto';
+        const title = document.createElement('h3'); title.textContent = 'Joint → Bone Mapping'; title.style.color = '#7dd3fc'; modal.appendChild(title);
+        const desc = document.createElement('div'); desc.innerHTML = '<div style="margin-bottom:8px">Select which avatar bone each incoming joint should drive. Mappings persist to localStorage.</div>';
+        modal.appendChild(desc);
+        const list = document.createElement('div'); list.id = 'jointMapList'; modal.appendChild(list);
+        const btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px';
+        const saveBtn = document.createElement('button'); saveBtn.textContent = 'Save'; saveBtn.style.cssText = 'background:#10b981;color:#042;padding:8px;border-radius:6px';
+        const closeBtn = document.createElement('button'); closeBtn.textContent = 'Close'; closeBtn.style.cssText = 'background:#334155;color:#e2e8f0;padding:8px;border-radius:6px';
+        const clearBtn = document.createElement('button'); clearBtn.textContent = 'Clear All'; clearBtn.style.cssText = 'background:#ef4444;color:#fff;padding:8px;border-radius:6px';
+        btnRow.appendChild(saveBtn); btnRow.appendChild(clearBtn); btnRow.appendChild(closeBtn);
+        modal.appendChild(btnRow);
+        document.body.appendChild(modal);
+
+        saveBtn.onclick = () => { try { localStorage.setItem(JOINT_MAP_KEY, JSON.stringify(jointNameMap || {})); alert('Mappings saved'); } catch (e) { alert('Failed to save mappings'); } };
+        clearBtn.onclick = () => { jointNameMap = {}; try { localStorage.removeItem(JOINT_MAP_KEY); } catch(e){} renderJointMapList(); };
+        closeBtn.onclick = () => { modal.style.display = 'none'; };
+      }
+      // render list
+      renderJointMapList();
+      modal.style.display = 'block';
+    }
+
+    function renderJointMapList() {
+      const list = document.getElementById('jointMapList');
+      if (!list) return;
+      list.innerHTML = '';
+      // collect bone names from rpmRoot
+      const boneNames = [];
+      if (rpmRoot) {
+        rpmRoot.traverse(o => { if (o.name) boneNames.push(o.name); });
+      }
+      const joints = Array.from(lastSeenJoints).sort();
+      if (!joints.length) {
+        const p = document.createElement('div'); p.textContent = 'No joint frames received yet. Connect to relay and send frames.'; list.appendChild(p); return;
+      }
+      joints.forEach(jn => {
+        const row = document.createElement('div'); row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0';
+        const lbl = document.createElement('div'); lbl.textContent = jn; lbl.style.cssText = 'width:160px';
+        const sel = document.createElement('select'); sel.style.cssText = 'flex:1;padding:6px;background:#0b1323;color:#e2e8f0;border-radius:6px;border:1px solid #334155';
+        const noneOpt = document.createElement('option'); noneOpt.value=''; noneOpt.textContent='-- none --'; sel.appendChild(noneOpt);
+        boneNames.forEach(bn => { const o = document.createElement('option'); o.value = bn; o.textContent = bn; sel.appendChild(o); });
+        // preselect
+        try { if (jointNameMap && jointNameMap[jn]) sel.value = jointNameMap[jn]; } catch (e) {}
+        sel.onchange = () => { if (!sel.value) delete jointNameMap[jn]; else jointNameMap[jn] = sel.value; };
+        row.appendChild(lbl); row.appendChild(sel);
+        list.appendChild(row);
+      });
+    }
+
+    function setRoomBoundsFromObject(obj) {
+      try {
+        const box = new THREE.Box3().setFromObject(obj);
+        if (!box.isEmpty()) {
+          // Expand slightly for margin
+          const pad = 0.05;
+          roomBounds.min.copy(box.min).addScalar(-pad);
+          roomBounds.max.copy(box.max).addScalar(pad);
+
+          // Align physics ground to the lowest y in the room
+          if (groundBody) {
+            groundBody.position.set(0, box.min.y + 0.005, 0);
+          }
+
+          // If ball exists, clamp it inside the new bounds
+          if (ballBody) {
+            const p = ballBody.position;
+            p.x = THREE.MathUtils.clamp(p.x, roomBounds.min.x + 0.1, roomBounds.max.x - 0.1);
+            p.y = THREE.MathUtils.clamp(p.y, roomBounds.min.y + 0.1, roomBounds.max.y - 0.1);
+            p.z = THREE.MathUtils.clamp(p.z, roomBounds.min.z + 0.1, roomBounds.max.z - 0.1);
+            ballBody.position.copy(p);
+            if (ballMesh) ballMesh.position.copy(p);
+          }
+          console.log('Room bounds set from object:', roomBounds);
+          try {
+            // If physics world already exists, create static walls
+            if (world) createRoomPhysicsWalls();
+          } catch (e) {}
+        }
+      } catch (e) { console.warn('Failed to compute room bounds:', e); }
+    }
+
+    // Create static physics walls based on roomBounds so objects collide naturally with walls
+    function createRoomPhysicsWalls() {
+      if (!world) return;
+      // remove any existing walls
+      try {
+        roomWalls.forEach(w => { try { world.removeBody(w); } catch(e) {} });
+      } catch (e) {}
+      roomWalls = [];
+      try {
+        const thickness = 0.05; // wall thickness
+        const min = roomBounds.min;
+        const max = roomBounds.max;
+        const width = max.x - min.x;
+        const depth = max.z - min.z;
+        const height = Math.max(1.5, max.y - min.y);
+        const halfY = height / 2;
+
+        // Left wall (near min.x)
+        const leftHalf = new CANNON.Vec3(thickness/2, halfY, depth/2);
+        const left = new CANNON.Body({ mass: 0 });
+        left.addShape(new CANNON.Box(leftHalf));
+        left.position.set(min.x + thickness/2, min.y + halfY, (min.z + max.z)/2);
+        world.addBody(left); roomWalls.push(left);
+
+        // Right wall (near max.x)
+        const rightHalf = new CANNON.Vec3(thickness/2, halfY, depth/2);
+        const right = new CANNON.Body({ mass: 0 });
+        right.addShape(new CANNON.Box(rightHalf));
+        right.position.set(max.x - thickness/2, min.y + halfY, (min.z + max.z)/2);
+        world.addBody(right); roomWalls.push(right);
+
+        // Front wall (near min.z)
+        const frontHalf = new CANNON.Vec3(width/2, halfY, thickness/2);
+        const front = new CANNON.Body({ mass: 0 });
+        front.addShape(new CANNON.Box(frontHalf));
+        front.position.set((min.x + max.x)/2, min.y + halfY, min.z + thickness/2);
+        world.addBody(front); roomWalls.push(front);
+
+        // Back wall (near max.z)
+        const backHalf = new CANNON.Vec3(width/2, halfY, thickness/2);
+        const back = new CANNON.Body({ mass: 0 });
+        back.addShape(new CANNON.Box(backHalf));
+        back.position.set((min.x + max.x)/2, min.y + halfY, max.z - thickness/2);
+        world.addBody(back); roomWalls.push(back);
+
+        console.log('Created', roomWalls.length, 'room walls for physics.');
+      } catch (e) { console.warn('Failed to create room physics walls', e); }
+    }
     initPreview();
 
     function initPreview() {
+      console.log('initPreview() starting...');
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0b1020);
 
@@ -206,8 +646,10 @@
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      // Add VR Button
-      document.body.appendChild(VRButton.createButton(renderer));
+      // Add VR Button with hand-tracking enabled
+      document.body.appendChild(VRButton.createButton(renderer, {
+        optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
+      }));
 
       controls = new OrbitControls(camera, renderer.domElement);
       controls.target.set(0, 1.3, 0);
@@ -228,6 +670,16 @@
         const env = g.scene;
         env.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(env);
+        // Compute room bounds from the loaded room
+        try { setRoomBoundsFromObject(env); } catch (e) { console.warn('setRoomBoundsFromObject failed', e); }
+        // Align physics ground plane with the lowest point of the room
+        try {
+          const box = new THREE.Box3().setFromObject(env);
+          const envMinY = box.min.y;
+          if (groundBody) {
+            groundBody.position.set(0, envMinY + 0.005, 0);
+          }
+        } catch {}
       }, undefined, (e) => console.warn('Failed to load Cube Room', e));
 
       // Load classical mirror on the floor
@@ -251,9 +703,9 @@
       // Soccer ball with physics
       setupSoccerBall(gltfLoader);
 
-      // Keyboard controls for WASD
-      window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
-      window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+  // Keyboard controls for WASD (defensive: some platforms may send non-key events)
+  window.addEventListener('keydown', (e) => { try { const k = e && e.key; if (typeof k === 'string') keys[k.toLowerCase()] = true; } catch (err) { /* ignore */ } });
+  window.addEventListener('keyup', (e) => { try { const k = e && e.key; if (typeof k === 'string') keys[k.toLowerCase()] = false; } catch (err) { /* ignore */ } });
 
       window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -261,13 +713,22 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
-      // VR controllers for grab and teleport (set up after renderer ready)
-      setupVRControllers();
+  // VR controllers for grab and teleport (set up after renderer ready)
+  setupVRControllers();
+  setupHands();
+  setupWatchMenu();
 
       renderer.setAnimationLoop(() => {
         updateMovement();
         updatePhysics();
         updateTeleport();
+        // Only run hand gesture processing when in VR or hand models are present
+        if (renderer.xr.isPresenting || hand1 || hand2) {
+          try { updateHandGestures(); } catch (e) { console.warn('updateHandGestures error', e); }
+        }
+        updateAvatarInVR();
+          // Refresh debug panel contents if visible
+          if (debugPanel && debugPanel.visible) refreshDebugPanelTexture();
         renderer.render(scene, camera);
       });
     }
@@ -280,6 +741,58 @@
       if (keys['d']) camera.position.x += moveSpeed;
     }
 
+    function updateAvatarInVR() {
+      // In VR mode, sync the avatar's position to where the user is standing
+      if (renderer.xr.isPresenting && rpmRoot && rpmRoot.parent === scene) {
+        const cameraWorldPos = new THREE.Vector3();
+        camera.getWorldPosition(cameraWorldPos);
+
+        // Desired avatar position: follow X and Z of camera but offset behind user so the camera is not inside the head
+        const desired = new THREE.Vector3(cameraWorldPos.x, 0, cameraWorldPos.z - 0.6);
+        // Smoothly interpolate to desired position
+        rpmRoot.position.lerp(desired, 0.25);
+
+        // Make avatar face the direction the user is looking (only Y-axis rotation)
+        const cameraDir = new THREE.Vector3();
+        camera.getWorldDirection(cameraDir);
+        cameraDir.y = 0;
+        cameraDir.normalize();
+        if (cameraDir.length() > 0.1) {
+          const targetY = Math.atan2(cameraDir.x, cameraDir.z);
+          // Smooth rotation
+          rpmRoot.rotation.y += (targetY - rpmRoot.rotation.y) * 0.25;
+        }
+        // Simple retargeting: try to orient avatar wrist bones to match tracked hand wrists
+        try {
+          if (rpmBoneMap && (rpmBoneMap.leftWrist || rpmBoneMap.rightWrist)) {
+            const hands = pickHands();
+            if (rpmBoneMap.leftWrist && hands.left) {
+              const jointQ = getJointWorldQuaternion(hands.left, 'wrist');
+              if (jointQ) {
+                const parent = rpmBoneMap.leftWrist.parent || rpmRoot;
+                const parentWorldQ = new THREE.Quaternion();
+                parent.getWorldQuaternion(parentWorldQ);
+                const localQ = parentWorldQ.clone().invert().multiply(jointQ);
+                rpmBoneMap.leftWrist.quaternion.slerp(localQ, 0.4);
+              }
+            }
+            if (rpmBoneMap.rightWrist && hands.right) {
+              const jointQ = getJointWorldQuaternion(hands.right, 'wrist');
+              if (jointQ) {
+                const parent = rpmBoneMap.rightWrist.parent || rpmRoot;
+                const parentWorldQ = new THREE.Quaternion();
+                parent.getWorldQuaternion(parentWorldQ);
+                const localQ = parentWorldQ.clone().invert().multiply(jointQ);
+                rpmBoneMap.rightWrist.quaternion.slerp(localQ, 0.4);
+              }
+            }
+          }
+        } catch (e) { /* ignore retarget errors */ }
+        // apply IK after orientation retarget
+        try { if (ikEnabled) updateTwoBoneIK(); } catch(e) {}
+      }
+    }
+
     // VR Controllers for grab and teleport
     function setupVRControllers() {
       const controllerModelFactory = new XRControllerModelFactory();
@@ -288,6 +801,11 @@
       controller1 = renderer.xr.getController(0);
       controller1.addEventListener('selectstart', onSelectStart);
       controller1.addEventListener('selectend', onSelectEnd);
+      controller1.addEventListener('squeezestart', () => { leftSqueezeStart = performance.now(); });
+      controller1.addEventListener('squeezeend', () => {
+        const dt = performance.now() - leftSqueezeStart;
+        if (dt > 250) toggleWatchMenu();
+      });
       scene.add(controller1);
 
       controllerGrip1 = renderer.xr.getControllerGrip(0);
@@ -320,13 +838,337 @@
       controller1.add(teleportRay);
     }
 
+    function setupHands() {
+      const handFactory = new XRHandModelFactory();
+      hand1 = renderer.xr.getHand(0);
+      hand1.add(handFactory.createHandModel(hand1, 'mesh'));
+      scene.add(hand1);
+
+      hand2 = renderer.xr.getHand(1);
+      hand2.add(handFactory.createHandModel(hand2, 'mesh'));
+      scene.add(hand2);
+
+      // Left-hand teleport ray (for pointing)
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-5)]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+      leftHandTeleportRay = new THREE.Line(lineGeo, lineMat);
+  leftHandTeleportRay.visible = false;
+  // Add to scene and we'll position it per-frame on the chosen left hand
+  scene.add(leftHandTeleportRay);
+    }
+
+    function getJointWorldPosition(hand, jointName) {
+      try {
+        if (!hand) return null;
+        const joint = hand.joints && (hand.joints[jointName] || hand.joints[jointName.replace('-', '')]);
+        if (joint) {
+          const p = new THREE.Vector3();
+          joint.getWorldPosition(p);
+          return p;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function getJointWorldQuaternion(hand, jointName) {
+      try {
+        if (!hand) return null;
+        const joint = hand.joints && (hand.joints[jointName] || hand.joints[jointName.replace('-', '')]);
+        if (joint) {
+          const q = new THREE.Quaternion();
+          joint.getWorldQuaternion(q);
+          return q;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function isRightPinching(distanceThreshold = 0.03) {
+      // Use pickHands to find the right-hand and test it
+      const chosen = pickHands();
+      const right = chosen.right;
+      const thresh = rightPinchThreshold || distanceThreshold;
+      if (!right) return false;
+      const thumb = getJointWorldPosition(right, 'thumb-tip') || getJointWorldPosition(right, 'thumbtip');
+      const index = getJointWorldPosition(right, 'index-finger-tip') || getJointWorldPosition(right, 'indexfingertip') || getJointWorldPosition(right, 'index-finger-phalanx-tip');
+      if (!thumb || !index) return false;
+      return thumb.distanceTo(index) < thresh;
+    }
+
+    function isPinching(hand, distanceThreshold = 0.04) {
+      if (!hand) return false;
+      const thresh = pinchThreshold || distanceThreshold;
+      const thumb = getJointWorldPosition(hand, 'thumb-tip') || getJointWorldPosition(hand, 'thumbtip');
+      const index = getJointWorldPosition(hand, 'index-finger-tip') || getJointWorldPosition(hand, 'indexfingertip') || getJointWorldPosition(hand, 'index-finger-phalanx-tip');
+      if (!thumb || !index) return false;
+      return thumb.distanceTo(index) < thresh;
+    }
+
+    function tryStartHandGrab(hand) {
+      if (!hand || !ballMesh || !ballBody) return false;
+      // Prefer index tip as grab joint
+      const joint = getJointWorldPosition(hand, 'index-finger-tip') || getJointWorldPosition(hand, 'indexfingertip');
+      if (!joint) return false;
+      const ballPos = new THREE.Vector3();
+      ballMesh.getWorldPosition(ballPos);
+      if (joint.distanceTo(ballPos) < 0.22) {
+        handGrab.hand = hand;
+        handGrab.jointName = 'index-finger-tip';
+        handGrab.prevPos = joint.clone();
+        handGrab.vel.set(0,0,0);
+        // zero physics while grabbed
+        ballBody.velocity.set(0,0,0);
+        ballBody.angularVelocity.set(0,0,0);
+        grabbed = ballMesh; // reuse existing grabbed flag for controller logic
+        return true;
+      }
+      return false;
+    }
+
+    function releaseHandGrab(hand) {
+      if (!handGrab.hand || handGrab.hand !== hand) return;
+      // apply velocity based on recent hand movement
+      const throwVel = handGrab.vel.clone().multiplyScalar(throwScalar); // tuning factor
+      if (ballBody) {
+        try { if (typeof ballBody.wakeUp === 'function') ballBody.wakeUp(); } catch(e) {}
+        ballBody.velocity.set(throwVel.x, throwVel.y, throwVel.z);
+        // small angular impulse
+        ballBody.angularVelocity.set((Math.random()-0.5)*3, (Math.random()-0.5)*3, (Math.random()-0.5)*3);
+      }
+      grabbed = null;
+      handGrab.hand = null;
+      handGrab.jointName = null;
+      handGrab.prevPos = null;
+      handGrab.vel.set(0,0,0);
+    }
+
+    function updateHandGrabTracking(dt = 1/60) {
+      if (handGrab.hand && handGrab.jointName && ballBody && ballMesh) {
+        const p = getJointWorldPosition(handGrab.hand, handGrab.jointName) || handGrab.prevPos;
+        if (!p) return;
+        // compute velocity
+        const v = p.clone().sub(handGrab.prevPos || p).divideScalar(dt);
+        // smooth velocity
+        handGrab.vel.lerp(v, 0.6);
+        handGrab.prevPos.copy(p);
+        // move ball body to follow hand joint
+        ballBody.position.set(p.x, p.y, p.z);
+        ballMesh.position.copy(ballBody.position);
+      }
+    }
+
+    function updateHandGestures() {
+      // Determine left/right hands robustly
+      const hands = pickHands();
+      const leftHand = hands.left;
+      const rightHand = hands.right;
+
+      // Determine left-hand pointing origin and direction
+      if (!leftHand && !rightHand) return;
+      let origin = null;
+      let dir = new THREE.Vector3(0,0,-1);
+      if (leftHand) {
+        const indexTip = getJointWorldPosition(leftHand, 'index-finger-tip') || getJointWorldPosition(leftHand, 'indexfingertip');
+        const wrist = getJointWorldPosition(leftHand, 'wrist');
+        if (indexTip && wrist) {
+          origin = indexTip.clone();
+          dir = indexTip.clone().sub(wrist).normalize();
+        } else {
+          origin = new THREE.Vector3();
+          leftHand.getWorldPosition(origin);
+          dir = new THREE.Vector3(0,0,-1).applyQuaternion(leftHand.quaternion);
+        }
+      } else if (rightHand) {
+        // fallback: use right hand for pointing if left not present
+        const indexTip = getJointWorldPosition(rightHand, 'index-finger-tip') || getJointWorldPosition(rightHand, 'indexfingertip');
+        const wrist = getJointWorldPosition(rightHand, 'wrist');
+        if (indexTip && wrist) {
+          origin = indexTip.clone();
+          dir = indexTip.clone().sub(wrist).normalize();
+        } else {
+          origin = new THREE.Vector3();
+          rightHand.getWorldPosition(origin);
+          dir = new THREE.Vector3(0,0,-1).applyQuaternion(rightHand.quaternion);
+        }
+      }
+
+      // Raycast with left-hand pointing
+      if (origin) {
+        const raycaster = new THREE.Raycaster(origin, dir);
+        const intersects = raycaster.intersectObjects(scene.children, true);
+        if (intersects.length > 0) {
+          const hit = intersects[0].point;
+          const floorY = groundBody ? groundBody.position.y : 0.01;
+          teleportMarker.position.set(hit.x, floorY + 0.01, hit.z);
+          teleportMarker.visible = true;
+          // show left-hand ray and position it
+          if (leftHandTeleportRay) {
+            leftHandTeleportRay.visible = true;
+            // position ray at origin and orient toward dir
+            leftHandTeleportRay.position.copy(origin);
+            const q = new THREE.Quaternion();
+            q.setFromUnitVectors(new THREE.Vector3(0,0,-1), dir.clone().normalize());
+            leftHandTeleportRay.setRotationFromQuaternion(q);
+          }
+        } else {
+          teleportMarker.visible = false;
+          if (leftHandTeleportRay) leftHandTeleportRay.visible = false;
+        }
+      }
+
+      // Detect right-hand pinch to activate teleport
+      const pinching = isRightPinching();
+      const markerJustBecameVisible = teleportMarker && teleportMarker.visible && !markerPrevVisible;
+      if (pinching && (!prevRightPinch || markerJustBecameVisible)) {
+        // pinch started or marker appeared while already pinching: trigger teleport if marker visible
+        if (teleportMarker && teleportMarker.visible) {
+          // reuse teleport logic from onSelectEnd
+          if (renderer.xr.isPresenting) {
+            const cameraPos = new THREE.Vector3();
+            camera.getWorldPosition(cameraPos);
+            vrOffset.x += teleportMarker.position.x - cameraPos.x;
+            vrOffset.z += teleportMarker.position.z - cameraPos.z;
+            if (camera.parent) camera.parent.position.copy(vrOffset);
+            if (rpmRoot && rpmRoot.parent === scene) rpmRoot.position.set(vrOffset.x, 0, vrOffset.z);
+          } else {
+            camera.position.x = teleportMarker.position.x;
+            camera.position.z = teleportMarker.position.z;
+          }
+          // hide marker after teleport
+          teleportMarker.visible = false;
+          if (leftHandTeleportRay) leftHandTeleportRay.visible = false;
+        }
+      }
+      prevRightPinch = pinching;
+      markerPrevVisible = teleportMarker && teleportMarker.visible;
+
+      // Hand-based grabbing: detect pinches on either hand to grab/release the ball
+      // Start grab if pinching and close to ball
+      try {
+        const chosen = pickHands();
+        const left = chosen.left; const right = chosen.right;
+        if (!handGrab.hand) {
+          if (isPinching(left)) tryStartHandGrab(left);
+          else if (isPinching(right)) tryStartHandGrab(right);
+        } else {
+          // If currently grabbing, release when pinch no longer detected
+          if (!isPinching(handGrab.hand)) {
+            releaseHandGrab(handGrab.hand);
+          }
+        }
+      } catch (e) { console.warn('Hand grab error', e); }
+
+      // Show watch menu when the back of the left hand faces the user (i.e., palm normal points away from user)
+      try {
+        const chosen = pickHands();
+        const left = chosen.left;
+        if (left && watchPanel) {
+          // get wrist and palm normal approximation: use index-finger-knuckle and wrist
+          const wrist = getJointWorldPosition(left, 'wrist');
+          const indexTip = getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip');
+          if (wrist && indexTip) {
+            const palmDir = indexTip.clone().sub(wrist).normalize(); // approximate forward of hand
+            // Vector from hand to camera
+            const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+            const toCam = camPos.clone().sub(wrist).normalize();
+            // if palmDir dot toCam < threshold means back of hand facing camera
+            const dot = palmDir.dot(toCam);
+            const backFacing = dot < backFacingDotThreshold;
+            if (backFacing) {
+              // show and orient watchPanel to face camera
+              watchPanel.visible = true;
+              // choose left controller grip to attach/orient panel near
+              let leftGrip = controllerGrip1 || controllerGrip2 || null;
+              try {
+                const g1 = controllerGrip1 ? controllerGrip1.getWorldPosition(new THREE.Vector3()) : null;
+                const g2 = controllerGrip2 ? controllerGrip2.getWorldPosition(new THREE.Vector3()) : null;
+                const cam = new THREE.Vector3(); camera.getWorldPosition(cam);
+                if (g1 && g2) {
+                  leftGrip = (g1.x < g2.x) ? controllerGrip1 : controllerGrip2;
+                } else if (g1) {
+                  leftGrip = controllerGrip1;
+                } else if (g2) {
+                  leftGrip = controllerGrip2;
+                }
+              } catch (e) {}
+              if (leftGrip) {
+                const worldPos = new THREE.Vector3(); leftGrip.getWorldPosition(worldPos);
+                const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+                const look = camPos.clone().sub(worldPos).normalize();
+                const yaw = Math.atan2(look.x, look.z);
+                watchPanel.rotation.set(0, -yaw, 0);
+                // keep panel attached to original parent (controllerGrip1) but positioned via its local offset
+              }
+            } else {
+              if (!watchPanel.userData.forceVisible) watchPanel.visible = false;
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     function onSelectStart(event) {
       const controller = event.target;
-      // Try to grab ball
+      const isRight = controller === controller2;
+
+      // If debug panel visible, check debug buttons first (right controller)
+      if (debugPanel && debugPanel.visible && isRight && debugButtons.length) {
+        const dHit = intersectDebugButtons(controller);
+        if (dHit && dHit.userData && dHit.userData.debugName) {
+          const name = dHit.userData.debugName;
+          switch (name) {
+            case 'RPinch+': rightPinchThreshold = Math.max(0.005, rightPinchThreshold - 0.005); break;
+            case 'RPinch-': rightPinchThreshold = rightPinchThreshold + 0.005; break;
+            case 'Pinch+': pinchThreshold = Math.max(0.005, pinchThreshold - 0.005); break;
+            case 'Pinch-': pinchThreshold = pinchThreshold + 0.005; break;
+            case 'Throw+': throwScalar = Math.max(0.1, throwScalar - 0.5); break;
+            case 'Throw-': throwScalar = throwScalar + 0.5; break;
+            case 'BackDot+': backFacingDotThreshold = Math.max(-1, backFacingDotThreshold - 0.05); break;
+            case 'BackDot-': backFacingDotThreshold = Math.min(1, backFacingDotThreshold + 0.05); break;
+          }
+          refreshDebugPanelTexture();
+          return;
+        }
+      }
+
+      // If watch menu visible, allow selecting buttons with right controller
+      if (watchPanel && watchPanel.visible && isRight && watchButtons.length) {
+        const hit = intersectWatchButtons(controller);
+        if (hit && hit.userData) {
+          if (hit.userData.room) {
+            const r = hit.userData.room;
+            goTo(r.id, r.scene);
+            return;
+          }
+          if (hit.userData.leave) {
+            // End XR session if available
+            try {
+              const sess = renderer.xr.getSession && renderer.xr.getSession();
+              if (sess) sess.end();
+            } catch (e) { console.warn('Failed to end XR session', e); }
+            return;
+          }
+          if (hit.userData.debug) {
+            makeDebugPanel();
+            if (debugPanel) {
+              debugPanel.visible = !debugPanel.visible;
+              if (debugPanel.visible) refreshDebugPanelTexture();
+            }
+            return;
+          }
+        }
+      }
+
+      // Try to grab ball (use world positions)
       if (ballMesh) {
-        const dist = controller.position.distanceTo(ballMesh.position);
-        if (dist < 0.3) {
+        const ctrlPos = new THREE.Vector3();
+        controller.getWorldPosition(ctrlPos);
+        const ballPos = new THREE.Vector3();
+        ballMesh.getWorldPosition(ballPos);
+        const dist = ctrlPos.distanceTo(ballPos);
+        if (dist < 0.25) {
           grabbed = ballMesh;
+          grabbedController = controller;
           if (ballBody) {
             ballBody.velocity.set(0, 0, 0);
             ballBody.angularVelocity.set(0, 0, 0);
@@ -344,12 +1186,33 @@
         const controller = event.target;
         const direction = new THREE.Vector3();
         controller.getWorldDirection(direction);
-        if (ballBody) ballBody.velocity.copy(direction.multiplyScalar(5));
+        try { if (typeof ballBody.wakeUp === 'function') ballBody.wakeUp(); } catch(e) {}
+        if (ballBody) ballBody.velocity.copy(direction.multiplyScalar(7));
         grabbed = null;
+        grabbedController = null;
       } else if (teleportMarker && teleportMarker.visible) {
-        // Teleport camera
-        camera.position.x = teleportMarker.position.x;
-        camera.position.z = teleportMarker.position.z;
+        // Teleport: In VR, we offset the base reference space
+        if (renderer.xr.isPresenting) {
+          // Get the camera's current offset from the origin
+          const cameraPos = new THREE.Vector3();
+          camera.getWorldPosition(cameraPos);
+          
+          // Calculate how much to offset to place user at target
+          vrOffset.x += teleportMarker.position.x - cameraPos.x;
+          vrOffset.z += teleportMarker.position.z - cameraPos.z;
+          
+          // Apply offset to camera parent (which moves the whole VR rig)
+          camera.parent.position.copy(vrOffset);
+          
+          // Update avatar position if it exists
+          if (rpmRoot && rpmRoot.parent === scene) {
+            rpmRoot.position.set(vrOffset.x, 0, vrOffset.z);
+          }
+        } else {
+          // Desktop mode: just move camera
+          camera.position.x = teleportMarker.position.x;
+          camera.position.z = teleportMarker.position.z;
+        }
       }
       if (teleportRay) teleportRay.visible = false;
       if (teleportMarker) teleportMarker.visible = false;
@@ -359,9 +1222,10 @@
       if (!renderer.xr.isPresenting || !controller1) return;
       try {
         if (grabbed && ballMesh && ballBody) {
-          // Follow controller
+          // Follow the controller that grabbed the ball (or controller1 fallback)
           const pos = new THREE.Vector3();
-          controller1.getWorldPosition(pos);
+          const ctrl = grabbedController || controller1;
+          if (ctrl) ctrl.getWorldPosition(pos);
           ballBody.position.copy(pos);
           ballMesh.position.copy(pos);
         }
@@ -374,7 +1238,8 @@
           const intersects = raycaster.intersectObjects(scene.children, true);
           if (intersects.length > 0) {
             const hit = intersects[0].point;
-            teleportMarker.position.set(hit.x, 0.01, hit.z);
+            const floorY = groundBody ? groundBody.position.y : 0.01;
+            teleportMarker.position.set(hit.x, floorY + 0.01, hit.z);
             teleportMarker.visible = true;
           } else {
             teleportMarker.visible = false;
@@ -394,9 +1259,13 @@
         // Initialize physics world
         world = new CANNON.World();
         world.gravity.set(0, -9.82, 0);
+        world.solver.iterations = 10;
+        world.allowSleep = true;
 
+  // If room bounds were computed already, create static walls now
+  try { createRoomPhysicsWalls(); } catch (e) {}
         // Ground plane
-        const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+        groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
         groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
         world.addBody(groundBody);
 
@@ -407,13 +1276,22 @@
           linearDamping: 0.3,
           angularDamping: 0.3
         });
-        ballBody.position.set(0, 0.5, 0);
+        ballBody.position.set(0, 0.35, 0);
         world.addBody(ballBody);
 
         // Load ball mesh
         loader.load('Rooms/soccer_ball.glb', (g) => {
           ballMesh = g.scene;
-          ballMesh.scale.setScalar(1); // Use model's actual scale
+          // Scale GLB so its visual diameter matches ~0.22m
+          try {
+            const box = new THREE.Box3().setFromObject(ballMesh);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+            const desired = 0.22;
+            const s = desired / maxDim;
+            ballMesh.scale.setScalar(s);
+          } catch { ballMesh.scale.setScalar(0.22); }
           ballMesh.position.copy(ballBody.position);
           scene.add(ballMesh);
           console.log('Soccer ball loaded at', ballMesh.position);
@@ -434,6 +1312,46 @@
       if (!world) return;
       try {
         world.step(1 / 60);
+        // If hand is grabbing, override physics position before step results
+        updateHandGrabTracking(1/60);
+
+        // Enforce simple room bounds for the ball (respect the ball radius so it stops at wall face)
+        if (ballBody) {
+          const p = ballBody.position;
+          let clamped = false;
+          // determine radius (prefer physics shape radius)
+          let radius = 0.11;
+          try {
+            if (ballBody.shapes && ballBody.shapes.length && typeof ballBody.shapes[0].radius === 'number') radius = ballBody.shapes[0].radius;
+          } catch (e) {}
+          // Also consider the visual mesh bounding box in case the GLB visual size differs from the physics shape
+          try {
+            if (ballMesh) {
+              const vb = new THREE.Box3().setFromObject(ballMesh);
+              const vs = new THREE.Vector3(); vb.getSize(vs);
+              const visualRadius = Math.max(vs.x, vs.y, vs.z) * 0.5;
+              if (visualRadius > radius) radius = visualRadius;
+            }
+          } catch (e) {}
+          const eps = 0.02; // small margin to avoid visible clipping
+          const minX = roomBounds.min.x + radius + eps;
+          const maxX = roomBounds.max.x - radius - eps;
+          const minY = roomBounds.min.y + radius + eps;
+          const maxY = roomBounds.max.y - radius - eps;
+          const minZ = roomBounds.min.z + radius + eps;
+          const maxZ = roomBounds.max.z - radius - eps;
+          if (p.x < minX) { p.x = minX; clamped = true; }
+          if (p.x > maxX) { p.x = maxX; clamped = true; }
+          if (p.y < minY) { p.y = minY; clamped = true; }
+          if (p.y > maxY) { p.y = maxY; clamped = true; }
+          if (p.z < minZ) { p.z = minZ; clamped = true; }
+          if (p.z > maxZ) { p.z = maxZ; clamped = true; }
+          if (clamped) {
+            // damp velocity to avoid sticking
+            try { ballBody.velocity.scale(0.4, ballBody.velocity); } catch (e) {}
+          }
+        }
+
         if (ballMesh && ballBody) {
           ballMesh.position.copy(ballBody.position);
           ballMesh.quaternion.copy(ballBody.quaternion);
@@ -458,6 +1376,247 @@
       return new THREE.CanvasTexture(canvas);
     }
 
+    // --- Watch menu (left wrist) ---
+    function setupWatchMenu() {
+      if (!renderer) return;
+      // Title panel (larger and taller to avoid overlap)
+      const panelGeo = new THREE.PlaneGeometry(0.26, 0.24);
+      const mat = new THREE.MeshBasicMaterial({ map: makeButtonTexture('Rooms'), transparent: true });
+      watchPanel = new THREE.Mesh(panelGeo, mat);
+      watchPanel.visible = false;
+      // Place at left wrist area (attach to wrist grip) but we will orient it dynamically
+      watchPanel.position.set(0.08, 0.02, 0);
+      watchPanel.rotation.y = -Math.PI / 2;
+      // pick left grip if available
+      let leftGrip = controllerGrip1 || null;
+      try {
+        if (controllerGrip1 && controllerGrip2) {
+          const p1 = controllerGrip1.getWorldPosition(new THREE.Vector3());
+          const p2 = controllerGrip2.getWorldPosition(new THREE.Vector3());
+          leftGrip = (p1.x < p2.x) ? controllerGrip1 : controllerGrip2;
+        }
+      } catch (e) { /* ignore */ }
+      if (leftGrip) leftGrip.add(watchPanel);
+      updateWatchMenuRooms(roomsCache);
+    }
+
+    function toggleWatchMenu() {
+      if (!watchPanel) return;
+      watchPanel.visible = !watchPanel.visible;
+    }
+
+    function updateWatchMenuRooms(rooms) {
+      if (!watchPanel) return;
+      // Remove previous button meshes
+      watchButtons.forEach(b => watchPanel.remove(b));
+      watchButtons = [];
+      const entries = rooms.filter(r => r.id !== 'cube-room');
+      const startY = 0.06; // start near top of panel
+      const gap = 0.055; // increase gap to avoid stacking
+      entries.forEach((r, i) => {
+        const btnGeo = new THREE.PlaneGeometry(0.22, 0.05);
+        const tex = makeButtonTexture(r.name);
+        const btnMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+        const btn = new THREE.Mesh(btnGeo, btnMat);
+        btn.position.set(0, startY - i * gap, 0.001);
+        btn.userData.room = r;
+        watchPanel.add(btn);
+        watchButtons.push(btn);
+      });
+      // Add Leave VR button at bottom
+      const leaveGeo = new THREE.PlaneGeometry(0.22, 0.05);
+      const leaveTex = makeButtonTexture('Leave VR');
+      const leaveMat = new THREE.MeshBasicMaterial({ map: leaveTex, transparent: true });
+      const leaveBtn = new THREE.Mesh(leaveGeo, leaveMat);
+      leaveBtn.position.set(0, startY - entries.length * gap - 0.02, 0.001);
+      leaveBtn.userData.leave = true;
+      watchPanel.add(leaveBtn);
+      watchButtons.push(leaveBtn);
+
+      // Add Debug button to open in-VR tuning panel
+      const debugGeo = new THREE.PlaneGeometry(0.22, 0.05);
+      const debugTex = makeButtonTexture('Debug');
+      const debugMat = new THREE.MeshBasicMaterial({ map: debugTex, transparent: true });
+      const debugBtn = new THREE.Mesh(debugGeo, debugMat);
+      debugBtn.position.set(0, startY - entries.length * gap - 0.08, 0.001);
+      debugBtn.userData.debug = true;
+      watchPanel.add(debugBtn);
+      watchButtons.push(debugBtn);
+    }
+
+    // Debug panel (floating) and interactive buttons
+    let debugPanel = null;
+    let debugButtons = [];
+    function makeDebugPanel() {
+      // Panel geometry
+      // choose left grip to attach to
+      let leftGrip = controllerGrip1 || null;
+      try {
+        if (controllerGrip1 && controllerGrip2) {
+          const p1 = controllerGrip1.getWorldPosition(new THREE.Vector3());
+          const p2 = controllerGrip2.getWorldPosition(new THREE.Vector3());
+          leftGrip = (p1.x < p2.x) ? controllerGrip1 : controllerGrip2;
+        }
+      } catch (e) {}
+      if (!leftGrip) return;
+      if (debugPanel) return debugPanel;
+      const panelGeo = new THREE.PlaneGeometry(0.30, 0.28);
+      const tex = makeDebugTexture();
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      debugPanel = new THREE.Mesh(panelGeo, mat);
+      debugPanel.position.set(0.2, 0.02, 0);
+      debugPanel.rotation.y = -Math.PI/2;
+      debugPanel.visible = false;
+      leftGrip.add(debugPanel);
+
+      // Buttons arranged vertically: increase/decrease for each param
+      const names = ['RPinch+', 'RPinch-', 'Pinch+', 'Pinch-', 'Throw+', 'Throw-', 'BackDot+', 'BackDot-'];
+      const startY = 0.08; const gap = 0.035;
+      names.forEach((n, i) => {
+        const btnGeo = new THREE.PlaneGeometry(0.12, 0.03);
+        const tex = makeButtonTexture(n);
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+        const btn = new THREE.Mesh(btnGeo, mat);
+        btn.position.set(-0.07, startY - i * gap, 0.001);
+        btn.userData.debugName = n;
+        debugPanel.add(btn);
+        debugButtons.push(btn);
+      });
+      return debugPanel;
+    }
+
+    function makeDebugTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(8,10,20,0.95)'; ctx.fillRect(0,0,512,512);
+      ctx.fillStyle = '#9ee7ff'; ctx.font = '20px Arial'; ctx.textAlign = 'left';
+      ctx.fillText('Debug Tuning', 20, 36);
+      ctx.fillStyle = '#e2e8f0'; ctx.font = '18px Arial';
+      ctx.fillText('Right pinch: ' + rightPinchThreshold.toFixed(3), 20, 80);
+      ctx.fillText('Pinch: ' + pinchThreshold.toFixed(3), 20, 110);
+      ctx.fillText('Throw scalar: ' + throwScalar.toFixed(2), 20, 140);
+      ctx.fillText('Back dot thresh: ' + backFacingDotThreshold.toFixed(2), 20, 170);
+      const tex = new THREE.CanvasTexture(canvas); tex.needsUpdate = true; return tex;
+    }
+
+    function refreshDebugPanelTexture() {
+      if (!debugPanel) return;
+      const mat = debugPanel.material;
+      const oldTex = mat.map;
+      mat.map = makeDebugTexture();
+      mat.map.needsUpdate = true;
+      if (oldTex) oldTex.dispose && oldTex.dispose();
+    }
+
+    function intersectDebugButtons(controller) {
+      if (!debugButtons.length) return null;
+      const origin = new THREE.Vector3(); controller.getWorldPosition(origin);
+      const dir = new THREE.Vector3(0,0,-1).applyQuaternion(controller.quaternion).normalize();
+      const ray = new THREE.Raycaster(origin, dir);
+      const hits = ray.intersectObjects(debugButtons, false);
+      return hits.length ? hits[0].object : null;
+    }
+
+    function makeButtonTexture(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(15,23,42,0.95)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#22d3ee';
+      ctx.font = 'bold 48px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    // --- Two-bone IK solver (approximate) ---
+    function updateTwoBoneIK() {
+      if (!rpmRoot) return;
+      const sides = [ { prefix: 'left', wristNameCandidates: ['left_wrist','leftwrist','lefthand','left_hand'] , upper:'leftUpperArm', lower:'leftLowerArm', wrist:'leftWrist' },
+                      { prefix: 'right', wristNameCandidates: ['right_wrist','rightwrist','righthand','right_hand'], upper:'rightUpperArm', lower:'rightLowerArm', wrist:'rightWrist' } ];
+      sides.forEach(side => {
+        try {
+          const upperBone = rpmBoneMap[side.upper];
+          const lowerBone = rpmBoneMap[side.lower];
+          const wristBone = rpmBoneMap[side.wrist];
+          if (!upperBone || !lowerBone || !wristBone) return;
+
+          // find target world position from lastJointPositions (prefer explicit names)
+          let target = null;
+          for (const n of side.wristNameCandidates) { if (lastJointPositions[n]) { target = lastJointPositions[n]; break; } }
+          if (!target) {
+            // fallback to any wrist joint key
+            target = lastJointPositions['left_wrist'] || lastJointPositions['right_wrist'] || null;
+          }
+          if (!target) return;
+
+          // world positions
+          const shoulderPos = new THREE.Vector3(); upperBone.getWorldPosition(shoulderPos);
+          const lowerPos = new THREE.Vector3(); lowerBone.getWorldPosition(lowerPos);
+          const wristPos = new THREE.Vector3(); wristBone.getWorldPosition(wristPos);
+
+          // bone lengths
+          const l1 = shoulderPos.distanceTo(lowerPos) || 0.25;
+          const l2 = lowerPos.distanceTo(wristPos) || 0.25;
+
+          // target vector
+          const toTarget = target.clone().sub(shoulderPos);
+          const d = Math.max(0.0001, toTarget.length());
+          // clamp reach
+          const maxReach = l1 + l2 - 1e-4;
+          const reach = Math.min(d, maxReach);
+
+          // law of cosines to find angle at shoulder
+          const cosAngle = THREE.MathUtils.clamp((l1*l1 + reach*reach - l2*l2) / (2*l1*reach), -1, 1);
+          const shoulderAngle = Math.acos(cosAngle);
+
+          // base direction
+          const dir = toTarget.clone().normalize();
+          // choose a bend axis (prefer world up)
+          let bendAxis = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+          if (bendAxis.length() < 0.001) bendAxis = new THREE.Vector3(1,0,0);
+
+          // compute elbow position in world space
+          const elbowPos = shoulderPos.clone().add(dir.clone().multiplyScalar(l1 * Math.cos(shoulderAngle))).add(bendAxis.clone().multiplyScalar(l1 * Math.sin(shoulderAngle)));
+
+          // compute desired world quaternions for upper and lower bones
+          const upperDesired = new THREE.Quaternion();
+          upperDesired.setFromUnitVectors(new THREE.Vector3(0,1,0), elbowPos.clone().sub(shoulderPos).normalize());
+          const lowerDesired = new THREE.Quaternion();
+          lowerDesired.setFromUnitVectors(new THREE.Vector3(0,1,0), target.clone().sub(elbowPos).normalize());
+
+          // convert to bone local space
+          const upperParent = upperBone.parent || rpmRoot;
+          const upperParentWorldQ = new THREE.Quaternion(); upperParent.getWorldQuaternion(upperParentWorldQ);
+          const upperLocal = upperParentWorldQ.clone().invert().multiply(upperDesired);
+
+          const lowerParent = lowerBone.parent || rpmRoot;
+          const lowerParentWorldQ = new THREE.Quaternion(); lowerParent.getWorldQuaternion(lowerParentWorldQ);
+          const lowerLocal = lowerParentWorldQ.clone().invert().multiply(lowerDesired);
+
+          // slerp toward desired rotations with ikWeight
+          upperBone.quaternion.slerp(upperLocal, ikWeight);
+          lowerBone.quaternion.slerp(lowerLocal, ikWeight);
+        } catch(e) { /* ignore per-side errors */ }
+      });
+    }
+
+    function intersectWatchButtons(controller) {
+      const origin = new THREE.Vector3();
+      controller.getWorldPosition(origin);
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(controller.quaternion).normalize();
+      const raycaster = new THREE.Raycaster(origin, dir);
+      // Intersect against the button meshes
+      const hits = raycaster.intersectObjects(watchButtons, false);
+      return hits.length ? hits[0].object : null;
+    }
+
     function loadRpmAvatar(url) {
       rpmRoot.clear();
       const gltfLoader = new GLTFLoader();
@@ -467,20 +1626,48 @@
       gltfLoader.load(url, (g) => {
         const model = g.scene;
         model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-        // Place roughly in front of mirror for desktop, but in VR we attach to camera
-        rpmRoot.position.set(0, 0, -1.2);
+        // Place avatar near the mirror for desktop: slightly in front of the mirror plane
+        rpmRoot.position.set(0, 0, -1.6);
         rpmRoot.add(model);
-        
-        // In VR, parent avatar to camera so user sees themselves in the mirror
+
+        // Ensure rpmRoot is parented to scene so it stays in world space
+        scene.add(rpmRoot);
+
+        // Try to detect bones for basic retargeting (wrist/hand bones)
+        try {
+          rpmBoneMap = {};
+          model.traverse(o => {
+            if (o.isSkinnedMesh && o.skeleton && o.skeleton.bones) {
+              o.skeleton.bones.forEach(b => {
+                const n = (b.name || '').toLowerCase();
+                if (n.includes('left') && (n.includes('hand') || n.includes('wrist'))) rpmBoneMap.leftWrist = b;
+                if (n.includes('right') && (n.includes('hand') || n.includes('wrist'))) rpmBoneMap.rightWrist = b;
+                if (!rpmBoneMap.leftWrist && (n.startsWith('l') && (n.includes('hand') || n.includes('wrist')))) rpmBoneMap.leftWrist = b;
+                if (!rpmBoneMap.rightWrist && (n.startsWith('r') && (n.includes('hand') || n.includes('wrist')))) rpmBoneMap.rightWrist = b;
+                // try to detect arm bones
+                if ((n.includes('left') || n.startsWith('l')) && (n.includes('upperarm') || n.includes('upper_arm') || n.includes('l_upperarm') || n.includes('leftarm') || n.includes('left_arm'))) rpmBoneMap.leftUpperArm = rpmBoneMap.leftUpperArm || b;
+                if ((n.includes('left') || n.startsWith('l')) && (n.includes('lowerarm') || n.includes('forearm') || n.includes('lower_arm') || n.includes('leftforearm'))) rpmBoneMap.leftLowerArm = rpmBoneMap.leftLowerArm || b;
+                if ((n.includes('right') || n.startsWith('r')) && (n.includes('upperarm') || n.includes('upper_arm') || n.includes('r_upperarm') || n.includes('rightarm') || n.includes('right_arm'))) rpmBoneMap.rightUpperArm = rpmBoneMap.rightUpperArm || b;
+                if ((n.includes('right') || n.startsWith('r')) && (n.includes('lowerarm') || n.includes('forearm') || n.includes('lower_arm') || n.includes('rightforearm'))) rpmBoneMap.rightLowerArm = rpmBoneMap.rightLowerArm || b;
+              });
+            }
+          });
+          if (rpmBoneMap.leftWrist || rpmBoneMap.rightWrist) console.log('Detected avatar bones for retargeting', rpmBoneMap);
+        } catch (e) { console.warn('Failed to detect avatar bones', e); }
+
+        // In VR, keep avatar in world space and follow the user's XZ with an offset so the camera
+        // does not end up inside the head. We'll update rpmRoot in updateAvatarInVR to follow with offset.
         renderer.xr.addEventListener('sessionstart', () => {
-          // Move avatar to follow camera/XR rig
-          rpmRoot.position.set(0, -0.3, -0.5);
-          camera.add(rpmRoot);
+          // On session start, place the avatar slightly behind the user (so they see it in mirror)
+          const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+          // place avatar about 0.6m behind the user on Z and aligned to their X
+          rpmRoot.position.set(camPos.x, 0, camPos.z - 0.6);
+          scene.add(rpmRoot);
         });
         renderer.xr.addEventListener('sessionend', () => {
-          // Return to scene root for desktop view
+          // Return to desktop mirror position
+          rpmRoot.position.set(0, 0, -1.6);
           scene.add(rpmRoot);
-          rpmRoot.position.set(0, 0, -1.2);
         });
       }, undefined, (e) => console.warn('Failed to load RPM avatar', e));
     }

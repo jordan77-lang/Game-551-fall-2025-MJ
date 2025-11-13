@@ -157,7 +157,16 @@
                 loader.load(sceneUrl, (gltf) => {
                     const env = gltf.scene;
                     env.traverse((c)=>{ if (c.isMesh){ c.castShadow = true; c.receiveShadow = true; }});
-                    scene.add(env);
+                        scene.add(env);
+                        // Compute room bounds from loaded environment if possible
+                        try {
+                            const box = new THREE.Box3().setFromObject(env);
+                            if (!box.isEmpty()) {
+                                // store on scene for other code to read
+                                scene.userData.roomBounds = { min: box.min.clone(), max: box.max.clone() };
+                                console.log('Multiplayer scene bounds:', scene.userData.roomBounds);
+                            }
+                        } catch(e){ console.warn('Failed to compute multiplayer scene bounds', e); }
                 }, undefined, (e)=>{
                     console.warn('Failed to load scene, falling back to default plane.', e);
                     addDefaultEnvironment();

@@ -7,11 +7,17 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["vr", "webxr", "multiplayer", "gaussian-splat"],
+  "keywords": [
+    "vr",
+    "webxr",
+    "multiplayer",
+    "gaussian-splat"
+  ],
   "author": "Mark Jordan",
   "license": "ISC",
   "dependencies": {
     "express": "^4.19.2",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.2",
+    "ws": "^8.18.3"
   }
 }
