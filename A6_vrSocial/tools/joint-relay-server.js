@@ -9,7 +9,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = process.env.JOINT_RELAY_PORT ? parseInt(process.env.JOINT_RELAY_PORT) : 4000;
+const PORT = process.env.JOINT_RELAY_PORT ? parseInt(process.env.JOINT_RELAY_PORT, 10) : 4444;
 
 // If certs exist next to server-https.js or in project root, enable HTTPS/WSS
 const repoRoot = path.join(__dirname, '..');

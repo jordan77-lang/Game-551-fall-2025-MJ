@@ -30,7 +30,7 @@
         <button id="rpmClear" title="Clear RPM avatar" style="background:#334155; color:#e2e8f0; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Clear</button>
       </div>
       <div style="display:flex; gap:8px; margin:6px 0 12px 0; align-items:center;">
-        <input id="relayUrl" placeholder="ws://localhost:4000" style="flex:1; padding:6px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0" />
+        <input id="relayUrl" placeholder="wss://localhost:4444" style="flex:1; padding:6px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0" />
         <button id="relayConnect" style="background:#2563eb; color:#fff; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Connect</button>
         <button id="relayDisconnect" style="background:#334155; color:#e2e8f0; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Disconnect</button>
         <button id="openJointMap" style="background:#0ea5e9; color:#022; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Map Joints</button>
@@ -79,12 +79,20 @@
       avatarUrl: localStorage.getItem('vr_rpm_avatar') || ''
     };
 
-  const API_DEV_PORT = 4000;
   const LIVE_SERVER_PORT = 5501;
-  const USE_DEV_API = Number(window.location.port) === LIVE_SERVER_PORT;
+  const API_DEV_PORT = 4000;
+  const locationInfo = (typeof window !== 'undefined' && window.location)
+    ? window.location
+    : { protocol: 'http:', hostname: 'localhost', port: '' };
+  const USE_DEV_API = Number(locationInfo.port) === LIVE_SERVER_PORT;
   const apiBaseUrl = USE_DEV_API
-    ? `${window.location.protocol}//${window.location.hostname}:${API_DEV_PORT}`
+    ? `${locationInfo.protocol}//${locationInfo.hostname}:${API_DEV_PORT}`
     : '';
+  const JOINT_RELAY_PORT_DEV = 4444;
+  const JOINT_RELAY_PORT_PROD = 4000;
+  const JOINT_RELAY_PORT = USE_DEV_API ? JOINT_RELAY_PORT_DEV : JOINT_RELAY_PORT_PROD;
+  const JOINT_RELAY_PROTOCOL = locationInfo.protocol === 'https:' ? 'wss' : 'ws';
+  const DEFAULT_RELAY_URL = `${JOINT_RELAY_PROTOCOL}://${locationInfo.hostname}:${JOINT_RELAY_PORT}`;
   const AVATAR_MIRROR_DISTANCE = 0.65; // desired distance between avatar root and mirror plane
   const AVATAR_YAW_SNAP_DEG = 3;
   const AVATAR_YAW_SMOOTH = 0.18;
@@ -236,35 +244,43 @@
     window.addEventListener('message', subscribe);
     document.addEventListener('message', subscribe);
 
+    const normalizeRelayUrl = (value) => {
+      if (!value) return DEFAULT_RELAY_URL;
+      try {
+        const candidate = value.startsWith('ws') ? value : `${JOINT_RELAY_PROTOCOL}://${value}`;
+        const url = new URL(candidate, DEFAULT_RELAY_URL);
+        url.protocol = `${JOINT_RELAY_PROTOCOL}:`;
+        url.hostname = url.hostname || locationInfo.hostname;
+        url.port = `${JOINT_RELAY_PORT}`;
+        return `${url.protocol}//${url.hostname}:${url.port}`;
+      } catch (err) {
+        return DEFAULT_RELAY_URL;
+      }
+    };
+
     // Relay UI wiring (connect to a joint relay WebSocket)
     try {
       const relayInput = document.getElementById('relayUrl');
       const relayConnectBtn = document.getElementById('relayConnect');
       const relayDisconnectBtn = document.getElementById('relayDisconnect');
-      // Choose a sensible default relay URL depending on whether the page is
-      // served over HTTPS. If HTTPS, prefer a secure WSS relay on the same host
-      // (so devices on the LAN will connect back to this machine). Otherwise
-      // default to localhost ws for local dev.
       const stored = localStorage.getItem('vr_relay_url');
-      let defaultRelay = 'ws://localhost:4000';
-      try {
-        if (window && window.location && window.location.protocol === 'https:') {
-          const host = window.location.hostname || 'localhost';
-          defaultRelay = `wss://${host}:4000`;
-        }
-      } catch(e) {}
-      const savedRelay = stored || defaultRelay;
-      if (relayInput) relayInput.value = savedRelay;
+      const savedRelay = normalizeRelayUrl(stored);
+      if (stored && stored !== savedRelay) {
+        try { localStorage.setItem('vr_relay_url', savedRelay); } catch(e){}
+      }
+      if (relayInput) {
+        relayInput.placeholder = DEFAULT_RELAY_URL;
+        relayInput.value = savedRelay;
+      }
       if (relayConnectBtn) relayConnectBtn.onclick = () => {
-        const url = (relayInput && relayInput.value) ? relayInput.value.trim() : savedRelay;
-        try { localStorage.setItem('vr_relay_url', url); } catch(e){}
-        startJointRelay(url);
+        const raw = (relayInput && relayInput.value) ? relayInput.value.trim() : savedRelay;
+        const normalized = normalizeRelayUrl(raw);
+        try { localStorage.setItem('vr_relay_url', normalized); } catch(e){}
+        startJointRelay(normalized);
         updateRelayStatus('connecting...');
       };
       if (relayDisconnectBtn) relayDisconnectBtn.onclick = () => { stopJointRelay(); updateRelayStatus('disconnected'); };
-      // Auto-connect to saved relay by default (safe no-op if nothing listening)
       if (savedRelay) {
-        // delay a bit to ensure three.js init functions exist
         setTimeout(() => { try { startJointRelay(savedRelay); } catch(e){} }, 1000);
       }
     } catch (e) { console.warn('Failed to wire relay UI', e); }
