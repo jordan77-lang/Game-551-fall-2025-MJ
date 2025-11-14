@@ -3,8 +3,37 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const socketIO = require('socket.io');
+const cors = require('cors');
 
 const app = express();
+const defaultHosts = ['127.0.0.1', 'localhost'];
+const liveServerPort = 5501;
+const extraHost = process.env.DEV_LAN_IP ? [process.env.DEV_LAN_IP] : [];
+const allowedHosts = new Set([...defaultHosts, ...extraHost]);
+const ALLOWED_ORIGINS = new Set();
+allowedHosts.forEach((host) => {
+    ALLOWED_ORIGINS.add(`https://${host}:${liveServerPort}`);
+    ALLOWED_ORIGINS.add(`http://${host}:${liveServerPort}`);
+});
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+        return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    credentials: true
+}));
+
+app.use((req, res, next) => {
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin && ALLOWED_ORIGINS.has(requestOrigin)) {
+        res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    }
+    next();
+});
 const server = http.createServer(app);
 const io = socketIO(server);
 
