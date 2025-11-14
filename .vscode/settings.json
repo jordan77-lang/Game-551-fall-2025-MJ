@@ -1,0 +1,11 @@
+{
+  "liveServer.settings.https": {
+    "enable": true,
+    "cert": "${workspaceFolder}/A6_vrSocial/localhost.pem",
+    "key": "${workspaceFolder}/A6_vrSocial/localhost-key.pem",
+    "passphrase": ""
+  },
+  "liveServer.settings.port": 5501,
+  "liveServer.settings.host": "127.0.0.1",
+  "liveServer.settings.root": "A6_vrSocial/public"
+}
