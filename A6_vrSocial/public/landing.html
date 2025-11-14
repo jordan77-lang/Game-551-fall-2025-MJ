@@ -93,6 +93,10 @@
   const JOINT_RELAY_PORT = USE_DEV_API ? JOINT_RELAY_PORT_DEV : JOINT_RELAY_PORT_PROD;
   const JOINT_RELAY_PROTOCOL = locationInfo.protocol === 'https:' ? 'wss' : 'ws';
   const DEFAULT_RELAY_URL = `${JOINT_RELAY_PROTOCOL}://${locationInfo.hostname}:${JOINT_RELAY_PORT}`;
+  const RELAY_ALTERNATES = [];
+  if (locationInfo.hostname && locationInfo.hostname !== 'localhost') {
+    RELAY_ALTERNATES.push(`${JOINT_RELAY_PROTOCOL}://localhost:${JOINT_RELAY_PORT}`);
+  }
   const AVATAR_MIRROR_DISTANCE = 0.65; // desired distance between avatar root and mirror plane
   const AVATAR_YAW_SNAP_DEG = 3;
   const AVATAR_YAW_SMOOTH = 0.18;
@@ -268,20 +272,39 @@
       if (stored && stored !== savedRelay) {
         try { localStorage.setItem('vr_relay_url', savedRelay); } catch(e){}
       }
+      const relayOptions = [savedRelay, ...RELAY_ALTERNATES];
       if (relayInput) {
         relayInput.placeholder = DEFAULT_RELAY_URL;
         relayInput.value = savedRelay;
+        if (relayInput.list) {
+          try {
+            let dataList = document.getElementById('relay-options');
+            if (!dataList) {
+              dataList = document.createElement('datalist');
+              dataList.id = 'relay-options';
+              document.body.appendChild(dataList);
+              relayInput.setAttribute('list', 'relay-options');
+            }
+            dataList.innerHTML = '';
+            relayOptions.forEach((option) => {
+              if (!option) return;
+              const opt = document.createElement('option');
+              opt.value = option;
+              dataList.appendChild(opt);
+            });
+          } catch (err) {}
+        }
       }
       if (relayConnectBtn) relayConnectBtn.onclick = () => {
         const raw = (relayInput && relayInput.value) ? relayInput.value.trim() : savedRelay;
         const normalized = normalizeRelayUrl(raw);
         try { localStorage.setItem('vr_relay_url', normalized); } catch(e){}
-        startJointRelay(normalized);
+        startJointRelay(normalized, relayOptions);
         updateRelayStatus('connecting...');
       };
       if (relayDisconnectBtn) relayDisconnectBtn.onclick = () => { stopJointRelay(); updateRelayStatus('disconnected'); };
       if (savedRelay) {
-        setTimeout(() => { try { startJointRelay(savedRelay); } catch(e){} }, 1000);
+        setTimeout(() => { try { startJointRelay(savedRelay, relayOptions); } catch(e){} }, 1000);
       }
     } catch (e) { console.warn('Failed to wire relay UI', e); }
     // Wire joint mapping modal
@@ -480,7 +503,7 @@
       if (ikSlider) { ikSlider.value = (typeof ikWeight === 'number' ? ikWeight : 1.0); ikSlider.oninput = () => { ikWeight = parseFloat(ikSlider.value); try { localStorage.setItem(IK_WEIGHT_KEY, String(ikWeight)); } catch(e){} }; }
     } catch (e) { console.warn('Failed to wire IK UI', e); }
 
-    function startJointRelay(url) {
+    function startJointRelay(url, alternates = []) {
       if (!url) return;
       // indicate we want an active connection
       relayShouldReconnect = true;
@@ -498,9 +521,20 @@
           // attempt reconnect if desired
           if (relayShouldReconnect) {
             relayReconnectAttempts++;
+            let nextUrl = url;
+            if (alternates.length > 0) {
+              const candidate = alternates.shift();
+              if (candidate && candidate !== url) {
+                nextUrl = candidate;
+                console.log('Switching relay attempt to alternate', nextUrl);
+              } else {
+                alternates.push(candidate);
+              }
+            }
             const delay = Math.min(10000, 500 * Math.pow(2, Math.min(relayReconnectAttempts, 6)));
             console.log('Attempting relay reconnect in', delay, 'ms (attempt', relayReconnectAttempts, ')');
-            relayReconnectTimer = setTimeout(() => { try { startJointRelay(url); } catch(e){} }, delay);
+            const optionsForNext = alternates.length > 0 ? [...alternates] : RELAY_ALTERNATES.slice();
+            relayReconnectTimer = setTimeout(() => { try { startJointRelay(nextUrl, optionsForNext); } catch(e){} }, delay);
             updateRelayStatus('reconnecting...');
           }
         };

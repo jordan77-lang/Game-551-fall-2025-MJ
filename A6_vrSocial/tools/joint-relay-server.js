@@ -81,4 +81,7 @@ wss.on('connection', (ws, req) => {
     try { ws.send(JSON.stringify(frame)); } catch (e) {}
   }, 50);
   ws.on('close', () => clearInterval(interval));
+  ws.on('error', (err) => {
+    console.warn('Joint relay socket error', err.message);
+  });
 });
