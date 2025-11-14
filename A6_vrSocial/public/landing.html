@@ -79,6 +79,12 @@
       avatarUrl: localStorage.getItem('vr_rpm_avatar') || ''
     };
 
+  const API_DEV_PORT = 4000;
+  const LIVE_SERVER_PORT = 5501;
+  const USE_DEV_API = Number(window.location.port) === LIVE_SERVER_PORT;
+  const apiBaseUrl = USE_DEV_API
+    ? `${window.location.protocol}//${window.location.hostname}:${API_DEV_PORT}`
+    : '';
   const AVATAR_MIRROR_DISTANCE = 0.65; // desired distance between avatar root and mirror plane
   const AVATAR_YAW_SNAP_DEG = 3;
   const AVATAR_YAW_SMOOTH = 0.18;
@@ -137,7 +143,7 @@
     // Fetch rooms
     async function loadRooms() {
       try {
-        const res = await fetch('/api/rooms');
+        const res = await fetch(`${apiBaseUrl}/api/rooms`);
         const rooms = await res.json();
         roomsCache = rooms;
         const container = document.getElementById('rooms');
