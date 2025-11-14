@@ -4,8 +4,64 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const socketIO = require('socket.io');
+const cors = require('cors');
+const os = require('os');
 
 const app = express();
+const allowAllCors = process.env.NODE_ENV !== 'production' || process.env.ALLOW_ALL_CORS === '1';
+const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+
+if (process.env.DEV_LAN_IP) allowedHosts.add(process.env.DEV_LAN_IP);
+
+try {
+    const nets = os.networkInterfaces();
+    Object.values(nets).forEach(entries => {
+        (entries || []).forEach(info => {
+            if (!info || info.internal) return;
+            if ((info.family === 'IPv4' || info.family === 4) && info.address) {
+                allowedHosts.add(info.address);
+            }
+        });
+    });
+} catch (err) {
+    console.warn('Failed to enumerate network interfaces for CORS whitelist', err);
+}
+
+const isOriginAllowed = (origin) => {
+    if (!origin) return allowAllCors;
+    if (allowAllCors) return true;
+    try {
+        const parsed = new URL(origin);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+        return allowedHosts.has(parsed.hostname);
+    } catch (err) {
+        return false;
+    }
+};
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (isOriginAllowed(origin)) return callback(null, true);
+        return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    credentials: true,
+    optionsSuccessStatus: 204
+}));
+
+app.use((req, res, next) => {
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin && isOriginAllowed(requestOrigin)) {
+        res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    }
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // Check if SSL certificates exist
 const certPath = path.join(__dirname, 'localhost.pem');
