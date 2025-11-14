@@ -36,13 +36,14 @@
         <button id="openJointMap" style="background:#0ea5e9; color:#022; border:none; padding:8px 10px; border-radius:8px; cursor:pointer">Map Joints</button>
       </div>
       <div style="margin-bottom:8px; color:#9ca3af; font-size:13px">
-        Relay status: <span id="relayStatus">disconnected</span>
+        Relay status: <span id="relayStatus">disconnected</span><br>
+        <div id="debug" style="font-size:12px; color:yellow;"></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
         <label style="color:#cbd5e1; font-size:13px">Enable IK</label>
         <input type="checkbox" id="ikEnable" />
         <label style="color:#cbd5e1; font-size:13px">Weight</label>
-        <input id="ikWeight" type="range" min="0" max="1" step="0.05" value="0.9" style="width:120px" />
+        <input id="ikWeight" type="range" min="0" max="1" step="0.05" value="1.0" style="width:120px" />
       </div>
       <p id="mirrorNote">You're in the Cube Room lobby. Create your avatar and see it in the mirror. Then pick another room below to join others.</p>
     </div>
@@ -77,6 +78,35 @@
       name: localStorage.getItem('vr_name') || '',
       avatarUrl: localStorage.getItem('vr_rpm_avatar') || ''
     };
+
+  const AVATAR_MIRROR_DISTANCE = 0.65; // desired distance between avatar root and mirror plane
+  const AVATAR_POS_THRESHOLD = 0.005; // minimal movement before nudging the root
+  const AVATAR_POS_SNAP_DISTANCE = 0.35; // snap instantly if offset exceeds this distance
+  const AVATAR_YAW_SNAP_DEG = 3;
+  const AVATAR_POS_SMOOTH = 40; // responsiveness factor for smoothing (larger = quicker)
+  const AVATAR_YAW_SMOOTH = 0.18;
+  let desktopAvatarZ = 1.85;
+  const HIDE_AVATAR_HANDS_IN_VR = true;
+  const _tmpAvatarPos = new THREE.Vector3();
+  const _tmpFacingDir = new THREE.Vector3();
+  const _tmpMirrorWorldPos = new THREE.Vector3();
+  const _tmpLookTarget = new THREE.Vector3();
+  const avatarHeadOffset = new THREE.Vector3(0, 1.55, -0.08);
+  let mirrorPlaneZ = desktopAvatarZ + (desktopAvatarZ >= 0 ? AVATAR_MIRROR_DISTANCE : -AVATAR_MIRROR_DISTANCE);
+  const _tmpRigWorldPos = new THREE.Vector3();
+  const _tmpSessionCamPos = new THREE.Vector3();
+  const _tmpQuatA = new THREE.Quaternion();
+  const _tmpQuatB = new THREE.Quaternion();
+  const _tmpQuatC = new THREE.Quaternion();
+  const _tmpQuatD = new THREE.Quaternion();
+  const _tmpHeadOffsetWorld = new THREE.Vector3();
+  const _yAxis = new THREE.Vector3(0, 1, 0);
+  const _tmpBox = new THREE.Box3();
+    const TELEPORT_ENABLED = false;
+  let vrAnchorPos = null;
+  let vrAnchorYaw = null;
+  let headCorrection = { active: false, quat: new THREE.Quaternion() };
+  let avatarHandMeshes = [];
 
     // Populate UI from saved state
     document.getElementById('displayName').value = state.name;
@@ -204,7 +234,19 @@
       const relayInput = document.getElementById('relayUrl');
       const relayConnectBtn = document.getElementById('relayConnect');
       const relayDisconnectBtn = document.getElementById('relayDisconnect');
-  const savedRelay = localStorage.getItem('vr_relay_url') || 'ws://localhost:4000';
+      // Choose a sensible default relay URL depending on whether the page is
+      // served over HTTPS. If HTTPS, prefer a secure WSS relay on the same host
+      // (so devices on the LAN will connect back to this machine). Otherwise
+      // default to localhost ws for local dev.
+      const stored = localStorage.getItem('vr_relay_url');
+      let defaultRelay = 'ws://localhost:4000';
+      try {
+        if (window && window.location && window.location.protocol === 'https:') {
+          const host = window.location.hostname || 'localhost';
+          defaultRelay = `wss://${host}:4000`;
+        }
+      } catch(e) {}
+      const savedRelay = stored || defaultRelay;
       if (relayInput) relayInput.value = savedRelay;
       if (relayConnectBtn) relayConnectBtn.onclick = () => {
         const url = (relayInput && relayInput.value) ? relayInput.value.trim() : savedRelay;
@@ -228,8 +270,9 @@
     // IK UI wiring moved below where IK state is declared to avoid temporal-deadzone errors
 
     // Three.js preview scene (Cube Room GLTF + mirror + RPM avatar)
-    let scene, camera, renderer, controls, rpmRoot;
+    let scene, camera, renderer, controls, rpmRoot, mixer, clock = new THREE.Clock();
   let rpmBoneMap = {}; // map of detected bones for avatar retargeting
+  let wristCorrection = {}; // extra correction from XR wrist orientation to avatar space
     let keys = {}; // For WASD movement
     let moveSpeed = 0.1;
   let controller1, controller2, controllerGrip1, controllerGrip2;
@@ -243,34 +286,95 @@
     // Physics world using Cannon.js
     let world, ballBody, ballMesh, groundBody;
 
-    // Hands
-    let hand1, hand2;
+  // Hands
+  let hand1, hand2;
+  let lastStableHands = { left: null, right: null };
 
-    // Helper to pick left/right hands based on wrist x relative to camera
+    function refreshHandHandedness() {
+      const session = (renderer.xr && typeof renderer.xr.getSession === 'function') ? renderer.xr.getSession() : null;
+      const updateHand = (hand) => {
+        if (!hand) return;
+        let handedness = null;
+        try { if (!handedness && hand.handedness) handedness = hand.handedness; } catch (e) {}
+        try { if (!handedness && hand.inputSource && hand.inputSource.handedness) handedness = hand.inputSource.handedness; } catch (e) {}
+        if (!handedness && session) {
+          try {
+            session.inputSources.forEach((src) => {
+              if (handedness) return;
+              try {
+                if (src.hand && hand.joints && src.hand === hand.joints) handedness = src.handedness;
+              } catch (err) {}
+            });
+          } catch (err) {}
+        }
+        if (handedness) {
+          if (!hand.userData) hand.userData = {};
+          hand.userData.handedness = handedness;
+        }
+      };
+      updateHand(hand1);
+      updateHand(hand2);
+    }
+
+    // Helper to pick left/right hands, preferring WebXR handedness to avoid midline flipping
     function pickHands() {
-      const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
-      const wrists = [];
-      [hand1, hand2].forEach(h => {
-        const w = getJointWorldPosition(h, 'wrist');
-        if (w) wrists.push({ hand: h, wrist: w });
+      const allHands = [hand1, hand2];
+      const activeHands = allHands.filter(Boolean);
+
+      // Drop cached assignments if their hand disappeared
+      if (lastStableHands.left && !activeHands.includes(lastStableHands.left)) {
+        lastStableHands.left = null;
+      }
+      if (lastStableHands.right && !activeHands.includes(lastStableHands.right)) {
+        lastStableHands.right = null;
+      }
+
+      // First try explicit handedness from WebXR
+      let left = null;
+      let right = null;
+      activeHands.forEach((h) => {
+        const handedness = h && ((h.userData && h.userData.handedness) || h.handedness || (h.inputSource && h.inputSource.handedness));
+        if (handedness === 'left' && !left) left = h;
+        if (handedness === 'right' && !right) right = h;
       });
-      if (wrists.length === 2) {
-        // left is the one with smaller x relative to camera
-        return wrists[0].wrist.x < wrists[1].wrist.x ? { left: wrists[0].hand, right: wrists[1].hand } : { left: wrists[1].hand, right: wrists[0].hand };
+
+      // If both hands are visible and still unassigned, classify using camera-local X
+      if (activeHands.length === 2 && (!left || !right)) {
+        const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+        const camQuat = new THREE.Quaternion(); camera.getWorldQuaternion(camQuat);
+        const camQuatInv = camQuat.clone().invert();
+
+        const classified = activeHands.map((h) => {
+          const wrist = getJointWorldPosition(h, 'wrist');
+          if (!wrist) return null;
+          const localX = wrist.clone().sub(camPos).applyQuaternion(camQuatInv).x;
+          return { hand: h, localX };
+        }).filter(Boolean).sort((a, b) => a.localX - b.localX);
+
+        if (classified.length === 2) {
+          if (!left) left = classified[0].hand;
+          if (!right) right = classified[1].hand;
+        }
       }
-      if (wrists.length === 1) {
-        const only = wrists[0];
-        return (only.wrist.x < camPos.x) ? { left: only.hand, right: null } : { left: null, right: only.hand };
-      }
-      // fallback: assume hand1 is left, hand2 is right
-      return { left: hand1 || null, right: hand2 || null };
+
+      if (!left && lastStableHands.left && activeHands.includes(lastStableHands.left)) left = lastStableHands.left;
+      if (!right && lastStableHands.right && activeHands.includes(lastStableHands.right)) right = lastStableHands.right;
+
+      if (!left) left = activeHands.find(h => h && h !== right) || activeHands[0] || null;
+      if (!right) right = activeHands.find(h => h && h !== left) || activeHands[0] || null;
+
+      lastStableHands.left = left;
+      lastStableHands.right = right;
+
+      return { left, right };
     }
 
     // Watch-menu state
-    let watchPanel = null;
+  let watchPanel = null;
+  let mirrorReflector = null;
     let watchButtons = [];
-    let roomsCache = [];
-    let leftSqueezeStart = 0;
+  let roomsCache = [];
+  let leftSqueezeStart = 0;
     
     // VR teleportation offset
     let baseReferenceSpace = null;
@@ -331,13 +435,18 @@
     const lastSeenJoints = new Set();
 
     // last received joint positions (world space) keyed by joint name
-    const lastJointPositions = {};
+  const lastJointPositions = {};
+  const smoothedJointPositions = {};
+  const smoothedJointRotations = {};
+  const POSITION_SMOOTH_ALPHA = 0.2;
+  const ROTATION_SMOOTH_ALPHA = 0.25;
+  let lastHeadQuaternion = null;
 
     // IK settings (persisted)
     const IK_ENABLED_KEY = 'vr_ik_enabled';
     const IK_WEIGHT_KEY = 'vr_ik_weight';
     let ikEnabled = false;
-    let ikWeight = parseFloat(localStorage.getItem(IK_WEIGHT_KEY) || '0.9');
+    let ikWeight = parseFloat(localStorage.getItem(IK_WEIGHT_KEY) || '1.0');
     try { ikEnabled = localStorage.getItem(IK_ENABLED_KEY) === 'true'; } catch (e) { ikEnabled = false; }
 
     // Wire IK UI controls (do this after ikEnabled/ikWeight exist)
@@ -345,7 +454,7 @@
       const ikChk = document.getElementById('ikEnable');
       const ikSlider = document.getElementById('ikWeight');
       if (ikChk) { ikChk.checked = !!ikEnabled; ikChk.onchange = () => { ikEnabled = !!ikChk.checked; try { localStorage.setItem(IK_ENABLED_KEY, ikEnabled ? 'true' : 'false'); } catch(e){} }; }
-      if (ikSlider) { ikSlider.value = (typeof ikWeight === 'number' ? ikWeight : 0.9); ikSlider.oninput = () => { ikWeight = parseFloat(ikSlider.value); try { localStorage.setItem(IK_WEIGHT_KEY, String(ikWeight)); } catch(e){} }; }
+      if (ikSlider) { ikSlider.value = (typeof ikWeight === 'number' ? ikWeight : 1.0); ikSlider.oninput = () => { ikWeight = parseFloat(ikSlider.value); try { localStorage.setItem(IK_WEIGHT_KEY, String(ikWeight)); } catch(e){} }; }
     } catch (e) { console.warn('Failed to wire IK UI', e); }
 
     function startJointRelay(url) {
@@ -357,7 +466,7 @@
       try {
         relaySocket = new WebSocket(url);
         relaySocket.binaryType = 'arraybuffer';
-        relaySocket.onopen = () => { relayConnected = true; console.log('Joint relay connected to', url); };
+        relaySocket.onopen = () => { relayConnected = true; console.log('Joint relay connected to', url); updateRelayStatus('connected'); };
         relaySocket.onclose = (ev) => {
           relayConnected = false;
           relaySocket = null;
@@ -406,6 +515,13 @@
     } catch (e) {}
   }
 
+  function updateDebug(text) {
+    try {
+      const el = document.getElementById('debug');
+      if (el) el.textContent = text;
+    } catch (e) {}
+  }
+
     function handleJointFrame(frame) {
       if (!frame || !frame.joints || !rpmRoot) return;
       // record joint names for mapping UI
@@ -421,12 +537,33 @@
           if (j.p && j.p.length === 3) p = new THREE.Vector3(j.p[0], j.p[1], j.p[2]);
         } catch (e) {}
 
-        // store last received positions for IK
-        try { if (p && j.name) lastJointPositions[j.name] = p.clone(); } catch (e) {}
+        // smooth and store last received positions for IK
+        if (p && j.name) {
+          try {
+            const prev = smoothedJointPositions[j.name];
+            const blended = prev ? prev.clone().lerp(p, POSITION_SMOOTH_ALPHA) : p.clone();
+            smoothedJointPositions[j.name] = blended;
+            lastJointPositions[j.name] = blended.clone();
+          } catch (e) {}
+        }
+
+        // smooth rotations and keep last head orientation
+        if (q && j.name) {
+          try {
+            const prevQ = smoothedJointRotations[j.name];
+            const blendedQ = prevQ ? prevQ.clone().slerp(q, ROTATION_SMOOTH_ALPHA) : q.clone();
+            smoothedJointRotations[j.name] = blendedQ;
+            q = blendedQ.clone();
+            if (jn.includes('head')) lastHeadQuaternion = blendedQ.clone();
+          } catch (e) {}
+        }
 
         // decide target bone
         const bone = mapJointToBone(j.name || jn);
         if (bone && q) {
+            if (renderer && renderer.xr && renderer.xr.isPresenting && (jn.includes('wrist') || jn.includes('hand') || jn.includes('head') || jn.includes('neck'))) {
+            return;
+          }
           // choose weight
           let w = 0.6;
           if (jn.includes('head')) w = retargetWeights.head || w;
@@ -438,14 +575,7 @@
         }
 
         // optional hips/root position update (lightweight)
-        if (p && (jn.includes('hip') || jn.includes('pelvis') || jn === 'root')) {
-          try {
-            // convert world position (from sender) into scene/world coordinates - assume same origin
-            // Smoothly lerp rpmRoot position toward reported hip position (keep Y clamped to avoid sinking)
-            const target = p.clone();
-            rpmRoot.position.lerp(target, 0.15 * (retargetWeights.hips || 0.5));
-          } catch (e) {}
-        }
+        // skip retargeting hips onto avatar root for now to avoid tug-of-war with VR rig
       });
     }
 
@@ -638,8 +768,8 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0b1020);
 
-      camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
-      camera.position.set(0, 1.6, 3);
+  camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 1.6, -3);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -651,8 +781,8 @@
         optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
       }));
 
-      controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 1.3, 0);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 1.3, 2.2);
       controls.update();
 
       // Lights
@@ -685,12 +815,43 @@
       // Load classical mirror on the floor
       gltfLoader.load('models/classical_mirror.glb', (g) => {
         const mirror = g.scene;
-        // Compute bounding box to find bottom
+        // Compute bounding box to find bottom and surface dimensions
         const box = new THREE.Box3().setFromObject(mirror);
+        const size = new THREE.Vector3(); box.getSize(size);
+        const center = new THREE.Vector3(); box.getCenter(center);
         const yOffset = -box.min.y; // Move up so bottom sits at y=0
-        mirror.position.set(0, yOffset, -2.5);
-        mirror.scale.setScalar(1);
+  mirror.position.set(0, yOffset, 2.5);
+  mirror.rotation.y = Math.PI;
+  mirror.scale.setScalar(1);
+
+        try {
+          const pixelRatio = renderer.getPixelRatio ? renderer.getPixelRatio() : window.devicePixelRatio || 1;
+          const surfaceGeom = new THREE.PlaneGeometry(size.x * 0.9, size.y * 0.9);
+          const reflector = new Reflector(surfaceGeom, {
+            clipBias: 0.0025,
+            textureWidth: Math.max(1, window.innerWidth * pixelRatio),
+            textureHeight: Math.max(1, window.innerHeight * pixelRatio),
+            color: 0x8899aa
+          });
+          reflector.position.set(center.x, center.y, box.max.z + 0.015);
+          reflector.userData.mirrorFrameDepth = box.max.z;
+          mirror.add(reflector);
+          mirrorReflector = reflector;
+        } catch (err) {
+          console.warn('Failed to create reflective surface', err);
+        }
+
         scene.add(mirror);
+        try {
+          mirror.updateMatrixWorld(true);
+          const planePos = (mirrorReflector || mirror).getWorldPosition(_tmpMirrorWorldPos);
+          mirrorPlaneZ = planePos.z;
+          const mirrorSign = mirrorPlaneZ === 0 ? 1 : Math.sign(mirrorPlaneZ);
+          desktopAvatarZ = mirrorPlaneZ - mirrorSign * AVATAR_MIRROR_DISTANCE;
+          updateDesktopAvatarPose();
+        } catch (err) {
+          console.warn('Failed to compute mirror plane depth', err);
+        }
         console.log('Mirror loaded, bottom at y=0');
       }, undefined, (e) => console.warn('Failed to load mirror', e));
 
@@ -698,6 +859,7 @@
       rpmRoot = new THREE.Group();
       rpmRoot.name = 'MyAvatar';
       scene.add(rpmRoot);
+  updateDesktopAvatarPose();
       if (state.avatarUrl) loadRpmAvatar(state.avatarUrl);
 
       // Soccer ball with physics
@@ -711,6 +873,19 @@
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        if (mirrorReflector) {
+          try {
+            const pixelRatio = renderer.getPixelRatio ? renderer.getPixelRatio() : window.devicePixelRatio || 1;
+            const target = typeof mirrorReflector.getRenderTarget === 'function'
+              ? mirrorReflector.getRenderTarget()
+              : mirrorReflector.renderTarget;
+            if (target && target.setSize) {
+              target.setSize(window.innerWidth * pixelRatio, window.innerHeight * pixelRatio);
+            }
+          } catch (err) {
+            console.warn('Mirror resize update failed', err);
+          }
+        }
       });
 
   // VR controllers for grab and teleport (set up after renderer ready)
@@ -719,49 +894,140 @@
   setupWatchMenu();
 
       renderer.setAnimationLoop(() => {
+  const delta = clock.getDelta();
+        if (mixer) mixer.update(delta);
         updateMovement();
         updatePhysics();
-        updateTeleport();
+  updateTeleport();
         // Only run hand gesture processing when in VR or hand models are present
         if (renderer.xr.isPresenting || hand1 || hand2) {
           try { updateHandGestures(); } catch (e) { console.warn('updateHandGestures error', e); }
         }
-        updateAvatarInVR();
+  updateAvatarInVR(delta);
+        if (!renderer.xr.isPresenting && rpmRoot) {
+          updateDesktopAvatarPose();
+          headCorrection.active = false;
+          headCorrection.quat.identity();
+          if (rpmBoneMap) {
+            if (rpmBoneMap.head && rpmBoneMap.head.userData && rpmBoneMap.head.userData.initialQuat) {
+              rpmBoneMap.head.quaternion.copy(rpmBoneMap.head.userData.initialQuat);
+            }
+            if (rpmBoneMap.neck && rpmBoneMap.neck.userData && rpmBoneMap.neck.userData.initialQuat) {
+              rpmBoneMap.neck.quaternion.copy(rpmBoneMap.neck.userData.initialQuat);
+            }
+          }
+          if (HIDE_AVATAR_HANDS_IN_VR) {
+            avatarHandMeshes.forEach(m => {
+              if (!m) return;
+              const orig = m.userData && m.userData.originalVisible;
+              m.visible = orig === undefined ? true : orig;
+            });
+          }
+        }
           // Refresh debug panel contents if visible
           if (debugPanel && debugPanel.visible) refreshDebugPanelTexture();
         renderer.render(scene, camera);
       });
     }
 
+    function normalizeAngle(angle) {
+      return Math.atan2(Math.sin(angle), Math.cos(angle));
+    }
+
+    function getMirrorFacingDir(target = _tmpFacingDir) {
+      camera.getWorldDirection(target);
+      target.y = 0;
+      if (target.lengthSq() < 1e-4) target.set(0, 0, -1);
+      return target.normalize();
+    }
+
+    function getAvatarYawFromDir(dir) {
+      return Math.atan2(dir.x, dir.z);
+    }
+
+    function updateDesktopAvatarPose() {
+      if (!rpmRoot || renderer.xr.isPresenting) return;
+      rpmRoot.position.set(0, 0, desktopAvatarZ);
+      const lookTarget = _tmpLookTarget.set(rpmRoot.position.x, 1.5, mirrorPlaneZ);
+      rpmRoot.lookAt(lookTarget);
+      rpmRoot.rotation.x = 0;
+      rpmRoot.rotation.z = 0;
+    }
+
+    function recomputeAvatarHeadOffset() {
+      if (!rpmRoot) return;
+      try {
+        rpmRoot.updateMatrixWorld(true);
+        if (rpmBoneMap && rpmBoneMap.head) {
+          rpmBoneMap.head.getWorldPosition(_tmpRigWorldPos);
+          _tmpHeadOffsetWorld.copy(_tmpRigWorldPos);
+          rpmRoot.worldToLocal(_tmpHeadOffsetWorld);
+          avatarHeadOffset.copy(_tmpHeadOffsetWorld);
+          avatarHeadOffset.z = Math.min(avatarHeadOffset.z, -0.08);
+        } else {
+          _tmpBox.setFromObject(rpmRoot);
+          if (!_tmpBox.isEmpty()) {
+            _tmpBox.getSize(_tmpHeadOffsetWorld);
+            avatarHeadOffset.set(0, Math.max(1.4, _tmpHeadOffsetWorld.y * 0.85), -0.08);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to recompute avatar head offset', err);
+      }
+    }
+
     function updateMovement() {
       // WASD movement
-      if (keys['w']) camera.position.z -= moveSpeed;
-      if (keys['s']) camera.position.z += moveSpeed;
+  if (keys['w']) camera.position.z += moveSpeed;
+  if (keys['s']) camera.position.z -= moveSpeed;
       if (keys['a']) camera.position.x -= moveSpeed;
       if (keys['d']) camera.position.x += moveSpeed;
     }
 
-    function updateAvatarInVR() {
-      // In VR mode, sync the avatar's position to where the user is standing
-      if (renderer.xr.isPresenting && rpmRoot && rpmRoot.parent === scene) {
-        const cameraWorldPos = new THREE.Vector3();
-        camera.getWorldPosition(cameraWorldPos);
+    function updateAvatarInVR(dt = 0.016, instant = false) {
+      if (!(renderer.xr.isPresenting && rpmRoot && rpmRoot.parent === scene)) return;
 
-        // Desired avatar position: follow X and Z of camera but offset behind user so the camera is not inside the head
-        const desired = new THREE.Vector3(cameraWorldPos.x, 0, cameraWorldPos.z - 0.6);
-        // Smoothly interpolate to desired position
-        rpmRoot.position.lerp(desired, 0.25);
+      const rigWorldPos = _tmpRigWorldPos;
+      if (camera.parent) camera.parent.getWorldPosition(rigWorldPos); else camera.getWorldPosition(rigWorldPos);
 
-        // Make avatar face the direction the user is looking (only Y-axis rotation)
-        const cameraDir = new THREE.Vector3();
-        camera.getWorldDirection(cameraDir);
-        cameraDir.y = 0;
-        cameraDir.normalize();
-        if (cameraDir.length() > 0.1) {
-          const targetY = Math.atan2(cameraDir.x, cameraDir.z);
-          // Smooth rotation
-          rpmRoot.rotation.y += (targetY - rpmRoot.rotation.y) * 0.25;
+      const mirrorFacingDirForOffset = _tmpFacingDir.set(0, 0, mirrorPlaneZ >= rigWorldPos.z ? 1 : -1);
+      const mirrorYawForOffset = getAvatarYawFromDir(mirrorFacingDirForOffset);
+      const yawForOffset = (instant || vrAnchorYaw === null) ? mirrorYawForOffset : vrAnchorYaw;
+      _tmpQuatA.setFromAxisAngle(_yAxis, yawForOffset);
+      _tmpHeadOffsetWorld.copy(avatarHeadOffset).applyQuaternion(_tmpQuatA);
+
+      const desired = _tmpAvatarPos.copy(rigWorldPos).sub(_tmpHeadOffsetWorld);
+      desired.y = 0;
+
+      if (!vrAnchorPos || instant) {
+        vrAnchorPos = desired.clone();
+      } else {
+        const movementSq = desired.distanceToSquared(vrAnchorPos);
+        if (movementSq >= AVATAR_POS_SNAP_DISTANCE * AVATAR_POS_SNAP_DISTANCE) {
+          vrAnchorPos.copy(desired);
+        } else if (movementSq > AVATAR_POS_THRESHOLD * AVATAR_POS_THRESHOLD) {
+          const stepDt = Math.max(dt, 1 / 240);
+          const blend = Math.min(1, 1 - Math.exp(-AVATAR_POS_SMOOTH * stepDt));
+          vrAnchorPos.lerp(desired, blend);
         }
+      }
+      rpmRoot.position.copy(vrAnchorPos);
+
+      const mirrorFacingDir = _tmpFacingDir.set(0, 0, mirrorPlaneZ >= rpmRoot.position.z ? 1 : -1);
+      const desiredYaw = getAvatarYawFromDir(mirrorFacingDir);
+      if (instant || vrAnchorYaw === null) {
+        vrAnchorYaw = desiredYaw;
+      } else {
+        const yawDelta = normalizeAngle(desiredYaw - vrAnchorYaw);
+        const yawDeltaDeg = Math.abs(yawDelta * 180 / Math.PI);
+        if (yawDeltaDeg > AVATAR_YAW_SNAP_DEG) {
+          const blend = 1 - Math.exp(-AVATAR_YAW_SMOOTH * Math.max(dt, 1 / 120));
+          vrAnchorYaw = normalizeAngle(vrAnchorYaw + yawDelta * blend);
+        } else {
+          vrAnchorYaw = desiredYaw;
+        }
+      }
+      rpmRoot.rotation.set(0, vrAnchorYaw ?? desiredYaw, 0);
         // Simple retargeting: try to orient avatar wrist bones to match tracked hand wrists
         try {
           if (rpmBoneMap && (rpmBoneMap.leftWrist || rpmBoneMap.rightWrist)) {
@@ -769,28 +1035,67 @@
             if (rpmBoneMap.leftWrist && hands.left) {
               const jointQ = getJointWorldQuaternion(hands.left, 'wrist');
               if (jointQ) {
+                if (!wristCorrection.left) {
+                  const parent = rpmBoneMap.leftWrist.parent || rpmRoot;
+                  const parentWorldQ = new THREE.Quaternion(); parent.getWorldQuaternion(parentWorldQ);
+                  const bindLocal = (rpmBoneMap.leftWrist.userData && rpmBoneMap.leftWrist.userData.initialQuat) ? rpmBoneMap.leftWrist.userData.initialQuat.clone() : rpmBoneMap.leftWrist.quaternion.clone();
+                  const bindWorld = parentWorldQ.clone().multiply(bindLocal);
+                  wristCorrection.left = jointQ.clone().invert().multiply(bindWorld);
+                }
+                const correctedWorld = jointQ.clone().multiply(wristCorrection.left);
                 const parent = rpmBoneMap.leftWrist.parent || rpmRoot;
-                const parentWorldQ = new THREE.Quaternion();
-                parent.getWorldQuaternion(parentWorldQ);
-                const localQ = parentWorldQ.clone().invert().multiply(jointQ);
-                rpmBoneMap.leftWrist.quaternion.slerp(localQ, 0.4);
+                const parentWorldQ = new THREE.Quaternion(); parent.getWorldQuaternion(parentWorldQ);
+                const localQ = parentWorldQ.clone().invert().multiply(correctedWorld);
+                rpmBoneMap.leftWrist.quaternion.slerp(localQ, instant ? 1 : 0.75);
               }
             }
             if (rpmBoneMap.rightWrist && hands.right) {
               const jointQ = getJointWorldQuaternion(hands.right, 'wrist');
               if (jointQ) {
+                if (!wristCorrection.right) {
+                  const parent = rpmBoneMap.rightWrist.parent || rpmRoot;
+                  const parentWorldQ = new THREE.Quaternion(); parent.getWorldQuaternion(parentWorldQ);
+                  const bindLocal = (rpmBoneMap.rightWrist.userData && rpmBoneMap.rightWrist.userData.initialQuat) ? rpmBoneMap.rightWrist.userData.initialQuat.clone() : rpmBoneMap.rightWrist.quaternion.clone();
+                  const bindWorld = parentWorldQ.clone().multiply(bindLocal);
+                  wristCorrection.right = jointQ.clone().invert().multiply(bindWorld);
+                }
+                const correctedWorld = jointQ.clone().multiply(wristCorrection.right);
                 const parent = rpmBoneMap.rightWrist.parent || rpmRoot;
-                const parentWorldQ = new THREE.Quaternion();
-                parent.getWorldQuaternion(parentWorldQ);
-                const localQ = parentWorldQ.clone().invert().multiply(jointQ);
-                rpmBoneMap.rightWrist.quaternion.slerp(localQ, 0.4);
+                const parentWorldQ = new THREE.Quaternion(); parent.getWorldQuaternion(parentWorldQ);
+                const localQ = parentWorldQ.clone().invert().multiply(correctedWorld);
+                rpmBoneMap.rightWrist.quaternion.slerp(localQ, instant ? 1 : 0.75);
               }
             }
           }
         } catch (e) { /* ignore retarget errors */ }
+
+        // Align head (and neck) toward the viewer's gaze
+        try {
+          if (rpmBoneMap && rpmBoneMap.head) {
+            const camQuat = _tmpQuatA;
+            camera.getWorldQuaternion(camQuat);
+            rpmBoneMap.head.getWorldQuaternion(_tmpQuatB);
+
+            if (!headCorrection.active) {
+              headCorrection.quat.copy(camQuat).invert().multiply(_tmpQuatB);
+              headCorrection.active = true;
+            }
+
+            const targetWorld = _tmpQuatC.copy(camQuat).multiply(headCorrection.quat);
+            const headParentWorld = _tmpQuatD;
+            (rpmBoneMap.head.parent || rpmRoot).getWorldQuaternion(headParentWorld);
+            const headLocal = headParentWorld.clone().invert().multiply(targetWorld);
+            rpmBoneMap.head.quaternion.slerp(headLocal, instant ? 1 : 0.55);
+
+            if (rpmBoneMap.neck) {
+              (rpmBoneMap.neck.parent || rpmRoot).getWorldQuaternion(_tmpQuatB);
+              const neckLocal = _tmpQuatB.clone().invert().multiply(targetWorld);
+              rpmBoneMap.neck.quaternion.slerp(neckLocal, instant ? 1 : 0.35);
+            }
+          }
+        } catch (e) { /* ignore head retarget errors */ }
         // apply IK after orientation retarget
         try { if (ikEnabled) updateTwoBoneIK(); } catch(e) {}
-      }
     }
 
     // VR Controllers for grab and teleport
@@ -840,21 +1145,24 @@
 
     function setupHands() {
       const handFactory = new XRHandModelFactory();
-      hand1 = renderer.xr.getHand(0);
-      hand1.add(handFactory.createHandModel(hand1, 'mesh'));
-      scene.add(hand1);
+    hand1 = renderer.xr.getHand(0);
+    hand1.add(handFactory.createHandModel(hand1, 'mesh'));
+    scene.add(hand1);
 
-      hand2 = renderer.xr.getHand(1);
-      hand2.add(handFactory.createHandModel(hand2, 'mesh'));
-      scene.add(hand2);
+    hand2 = renderer.xr.getHand(1);
+    hand2.add(handFactory.createHandModel(hand2, 'mesh'));
+    scene.add(hand2);
 
       // Left-hand teleport ray (for pointing)
-      const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-5)]);
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-5)]);
       const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
       leftHandTeleportRay = new THREE.Line(lineGeo, lineMat);
-  leftHandTeleportRay.visible = false;
-  // Add to scene and we'll position it per-frame on the chosen left hand
-  scene.add(leftHandTeleportRay);
+    leftHandTeleportRay.visible = false;
+    // Add to scene and we'll position it per-frame on the chosen left hand
+    scene.add(leftHandTeleportRay);
+      refreshHandHandedness();
+      renderer.xr.addEventListener('sessionstart', refreshHandHandedness);
+      renderer.xr.addEventListener('inputsourceschange', refreshHandHandedness);
     }
 
     function getJointWorldPosition(hand, jointName) {
@@ -962,6 +1270,12 @@
       const hands = pickHands();
       const leftHand = hands.left;
       const rightHand = hands.right;
+
+      if (!TELEPORT_ENABLED) {
+        if (teleportMarker) teleportMarker.visible = false;
+        if (leftHandTeleportRay) leftHandTeleportRay.visible = false;
+        return;
+      }
 
       // Determine left-hand pointing origin and direction
       if (!leftHand && !rightHand) return;
@@ -1177,7 +1491,7 @@
         }
       }
       // Otherwise show teleport ray
-      if (teleportRay) teleportRay.visible = true;
+      if (teleportRay) teleportRay.visible = TELEPORT_ENABLED && renderer.xr.isPresenting;
     }
 
     function onSelectEnd(event) {
@@ -1190,7 +1504,7 @@
         if (ballBody) ballBody.velocity.copy(direction.multiplyScalar(7));
         grabbed = null;
         grabbedController = null;
-      } else if (teleportMarker && teleportMarker.visible) {
+      } else if (TELEPORT_ENABLED && teleportMarker && teleportMarker.visible) {
         // Teleport: In VR, we offset the base reference space
         if (renderer.xr.isPresenting) {
           // Get the camera's current offset from the origin
@@ -1219,7 +1533,13 @@
     }
 
     function updateTeleport() {
-      if (!renderer.xr.isPresenting || !controller1) return;
+      if (!renderer.xr.isPresenting || !controller1) {
+        if (!TELEPORT_ENABLED) {
+          if (teleportRay) teleportRay.visible = false;
+          if (teleportMarker) teleportMarker.visible = false;
+        }
+        return;
+      }
       try {
         if (grabbed && ballMesh && ballBody) {
           // Follow the controller that grabbed the ball (or controller1 fallback)
@@ -1228,6 +1548,11 @@
           if (ctrl) ctrl.getWorldPosition(pos);
           ballBody.position.copy(pos);
           ballMesh.position.copy(pos);
+        }
+        if (!TELEPORT_ENABLED) {
+          if (teleportRay) teleportRay.visible = false;
+          if (teleportMarker) teleportMarker.visible = false;
+          return;
         }
         if (teleportRay && teleportRay.visible) {
           // Raycast to find teleport target
@@ -1276,7 +1601,7 @@
           linearDamping: 0.3,
           angularDamping: 0.3
         });
-        ballBody.position.set(0, 0.35, 0);
+  ballBody.position.set(-1.2, 0.35, 2.1);
         world.addBody(ballBody);
 
         // Load ball mesh
@@ -1538,35 +1863,47 @@
     // --- Two-bone IK solver (approximate) ---
     function updateTwoBoneIK() {
       if (!rpmRoot) return;
+      let debugText = 'IK: ';
       const sides = [ { prefix: 'left', wristNameCandidates: ['left_wrist','leftwrist','lefthand','left_hand'] , upper:'leftUpperArm', lower:'leftLowerArm', wrist:'leftWrist' },
                       { prefix: 'right', wristNameCandidates: ['right_wrist','rightwrist','righthand','right_hand'], upper:'rightUpperArm', lower:'rightLowerArm', wrist:'rightWrist' } ];
+      const hands = pickHands(); // get WebXR hand data
       sides.forEach(side => {
         try {
           const upperBone = rpmBoneMap[side.upper];
           const lowerBone = rpmBoneMap[side.lower];
           const wristBone = rpmBoneMap[side.wrist];
-          if (!upperBone || !lowerBone || !wristBone) return;
+          if (!upperBone || !lowerBone || !wristBone) { debugText += side.prefix + ': no bones '; return; }
 
-          // find target world position from lastJointPositions (prefer explicit names)
-          let target = null;
-          for (const n of side.wristNameCandidates) { if (lastJointPositions[n]) { target = lastJointPositions[n]; break; } }
-          if (!target) {
-            // fallback to any wrist joint key
-            target = lastJointPositions['left_wrist'] || lastJointPositions['right_wrist'] || null;
+          // prefer WebXR hand wrist position as target, fallback to relay
+          let targetVec = null;
+          const hand = side.prefix === 'left' ? hands.left : hands.right;
+          if (hand) {
+            const wristPos = getJointWorldPosition(hand, 'wrist');
+            if (wristPos) targetVec = wristPos.clone();
           }
-          if (!target) return;
+          if (!targetVec) {
+            for (const n of side.wristNameCandidates) {
+              if (lastJointPositions[n]) {
+                targetVec = lastJointPositions[n].clone();
+                break;
+              }
+            }
+          }
+          if (!targetVec) { debugText += side.prefix + ': no target '; return; }
 
           // world positions
           const shoulderPos = new THREE.Vector3(); upperBone.getWorldPosition(shoulderPos);
           const lowerPos = new THREE.Vector3(); lowerBone.getWorldPosition(lowerPos);
           const wristPos = new THREE.Vector3(); wristBone.getWorldPosition(wristPos);
 
+          debugText += side.prefix + ': tgt=' + targetVec.toArray().map(x=>x.toFixed(2)).join(',') + ' sh=' + shoulderPos.toArray().map(x=>x.toFixed(2)).join(',') + ' ';
+
           // bone lengths
           const l1 = shoulderPos.distanceTo(lowerPos) || 0.25;
           const l2 = lowerPos.distanceTo(wristPos) || 0.25;
 
           // target vector
-          const toTarget = target.clone().sub(shoulderPos);
+          const toTarget = targetVec.clone().sub(shoulderPos);
           const d = Math.max(0.0001, toTarget.length());
           // clamp reach
           const maxReach = l1 + l2 - 1e-4;
@@ -1582,14 +1919,21 @@
           let bendAxis = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
           if (bendAxis.length() < 0.001) bendAxis = new THREE.Vector3(1,0,0);
 
-          // compute elbow position in world space
-          const elbowPos = shoulderPos.clone().add(dir.clone().multiplyScalar(l1 * Math.cos(shoulderAngle))).add(bendAxis.clone().multiplyScalar(l1 * Math.sin(shoulderAngle)));
+          // compute two possible elbow positions
+          const elbowPos1 = shoulderPos.clone().add(dir.clone().multiplyScalar(l1 * Math.cos(shoulderAngle))).add(bendAxis.clone().multiplyScalar(l1 * Math.sin(shoulderAngle)));
+          const elbowPos2 = shoulderPos.clone().add(dir.clone().multiplyScalar(l1 * Math.cos(shoulderAngle))).add(bendAxis.clone().multiplyScalar(-l1 * Math.sin(shoulderAngle)));
+
+          // choose the one farther from body center (rpmRoot.position)
+          const bodyCenter = rpmRoot.position;
+          const dist1 = elbowPos1.distanceTo(bodyCenter);
+          const dist2 = elbowPos2.distanceTo(bodyCenter);
+          const elbowPos = dist1 > dist2 ? elbowPos1 : elbowPos2;
 
           // compute desired world quaternions for upper and lower bones
           const upperDesired = new THREE.Quaternion();
           upperDesired.setFromUnitVectors(new THREE.Vector3(0,1,0), elbowPos.clone().sub(shoulderPos).normalize());
           const lowerDesired = new THREE.Quaternion();
-          lowerDesired.setFromUnitVectors(new THREE.Vector3(0,1,0), target.clone().sub(elbowPos).normalize());
+          lowerDesired.setFromUnitVectors(new THREE.Vector3(0,1,0), targetVec.clone().sub(elbowPos).normalize());
 
           // convert to bone local space
           const upperParent = upperBone.parent || rpmRoot;
@@ -1603,8 +1947,9 @@
           // slerp toward desired rotations with ikWeight
           upperBone.quaternion.slerp(upperLocal, ikWeight);
           lowerBone.quaternion.slerp(lowerLocal, ikWeight);
-        } catch(e) { /* ignore per-side errors */ }
+        } catch(e) { debugText += side.prefix + ': err '; }
       });
+      updateDebug(debugText);
     }
 
     function intersectWatchButtons(controller) {
@@ -1618,20 +1963,52 @@
     }
 
     function loadRpmAvatar(url) {
-      rpmRoot.clear();
+  rpmRoot.clear();
+  wristCorrection = {};
+  avatarHandMeshes = [];
+  headCorrection.active = false;
+  headCorrection.quat.identity();
       const gltfLoader = new GLTFLoader();
       const draco = new DRACOLoader();
       draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
       gltfLoader.setDRACOLoader(draco);
       gltfLoader.load(url, (g) => {
         const model = g.scene;
-        model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-        // Place avatar near the mirror for desktop: slightly in front of the mirror plane
-        rpmRoot.position.set(0, 0, -1.6);
+        model.traverse(o => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+            if (HIDE_AVATAR_HANDS_IN_VR) {
+              const meshName = (o.name || '').toLowerCase();
+              if (meshName.includes('hand')) {
+                if (!o.userData) o.userData = {};
+                if (o.userData.originalVisible === undefined) o.userData.originalVisible = o.visible;
+                avatarHandMeshes.push(o);
+              }
+            }
+          }
+          if (o.isBone) {
+            o.userData.initialQuat = o.quaternion.clone();
+          }
+    });
+    // Place avatar near the mirror for desktop: slightly in front of the mirror plane
+        const inVR = renderer.xr.isPresenting;
+        if (!inVR) updateDesktopAvatarPose();
         rpmRoot.add(model);
 
         // Ensure rpmRoot is parented to scene so it stays in world space
         scene.add(rpmRoot);
+        if (HIDE_AVATAR_HANDS_IN_VR && renderer.xr.isPresenting) {
+          avatarHandMeshes.forEach(m => { if (m) m.visible = false; });
+        }
+
+        // Play animations if any
+        if (g.animations && g.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(model);
+          const action = mixer.clipAction(g.animations[0]);
+          action.play();
+          console.log('Playing avatar animation:', g.animations[0].name);
+        }
 
         // Try to detect bones for basic retargeting (wrist/hand bones)
         try {
@@ -1649,24 +2026,48 @@
                 if ((n.includes('left') || n.startsWith('l')) && (n.includes('lowerarm') || n.includes('forearm') || n.includes('lower_arm') || n.includes('leftforearm'))) rpmBoneMap.leftLowerArm = rpmBoneMap.leftLowerArm || b;
                 if ((n.includes('right') || n.startsWith('r')) && (n.includes('upperarm') || n.includes('upper_arm') || n.includes('r_upperarm') || n.includes('rightarm') || n.includes('right_arm'))) rpmBoneMap.rightUpperArm = rpmBoneMap.rightUpperArm || b;
                 if ((n.includes('right') || n.startsWith('r')) && (n.includes('lowerarm') || n.includes('forearm') || n.includes('lower_arm') || n.includes('rightforearm'))) rpmBoneMap.rightLowerArm = rpmBoneMap.rightLowerArm || b;
+                if (!rpmBoneMap.head && n.includes('head')) rpmBoneMap.head = b;
+                if (!rpmBoneMap.neck && n.includes('neck')) rpmBoneMap.neck = b;
               });
             }
           });
           if (rpmBoneMap.leftWrist || rpmBoneMap.rightWrist) console.log('Detected avatar bones for retargeting', rpmBoneMap);
         } catch (e) { console.warn('Failed to detect avatar bones', e); }
 
+    recomputeAvatarHeadOffset();
+    if (renderer.xr.isPresenting) updateAvatarInVR(0, true);
+
         // In VR, keep avatar in world space and follow the user's XZ with an offset so the camera
         // does not end up inside the head. We'll update rpmRoot in updateAvatarInVR to follow with offset.
         renderer.xr.addEventListener('sessionstart', () => {
-          // On session start, place the avatar slightly behind the user (so they see it in mirror)
-          const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
-          // place avatar about 0.6m behind the user on Z and aligned to their X
-          rpmRoot.position.set(camPos.x, 0, camPos.z - 0.6);
+          vrAnchorPos = null;
+          vrAnchorYaw = null;
+          headCorrection.active = false;
+          headCorrection.quat.identity();
+          wristCorrection = {};
+          lastStableHands = { left: null, right: null };
+          if (HIDE_AVATAR_HANDS_IN_VR) {
+            avatarHandMeshes.forEach(m => { if (m) m.visible = false; });
+          }
+          recomputeAvatarHeadOffset();
+          refreshHandHandedness();
           scene.add(rpmRoot);
+          updateAvatarInVR(0, true);
         });
         renderer.xr.addEventListener('sessionend', () => {
-          // Return to desktop mirror position
-          rpmRoot.position.set(0, 0, -1.6);
+          vrAnchorPos = null;
+          vrAnchorYaw = null;
+          headCorrection.active = false;
+          headCorrection.quat.identity();
+          if (HIDE_AVATAR_HANDS_IN_VR) {
+            avatarHandMeshes.forEach(m => {
+              if (!m) return;
+              const orig = m.userData && m.userData.originalVisible;
+              m.visible = orig === undefined ? true : orig;
+            });
+          }
+          wristCorrection = {};
+          updateDesktopAvatarPose();
           scene.add(rpmRoot);
         });
       }, undefined, (e) => console.warn('Failed to load RPM avatar', e));

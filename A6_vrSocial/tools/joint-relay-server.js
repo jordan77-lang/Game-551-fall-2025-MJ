@@ -4,31 +4,61 @@
 //  node tools/joint-relay-server.js
 
 const http = require('http');
+const https = require('https');
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.JOINT_RELAY_PORT ? parseInt(process.env.JOINT_RELAY_PORT) : 4000;
 
-// Simple HTTP server that serves a health page at /
-const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<html><head><title>Joint Relay</title></head><body style="font-family:Arial,Helvetica,sans-serif;background:#08101a;color:#cbd5e1;">
-      <h2 style="color:#22d3ee">Joint Relay Test Server</h2>
-      <p>WebSocket endpoint: <code>ws://localhost:${PORT}</code></p>
-      <p>Status: <strong id="status">starting</strong></p>
-      <p>This server accepts WebSocket connections and streams test joint frames. Use a WebSocket client or your landing page Relay UI to connect.</p>
-      </body></html>`);
-    return;
-  }
-  // Other paths: 404
-  res.writeHead(404, { 'Content-Type': 'text/plain' });
-  res.end('Not found');
-});
+// If certs exist next to server-https.js or in project root, enable HTTPS/WSS
+const repoRoot = path.join(__dirname, '..');
+const certPath = path.join(repoRoot, 'localhost.pem');
+const keyPath = path.join(repoRoot, 'localhost-key.pem');
+const useTLS = fs.existsSync(certPath) && fs.existsSync(keyPath);
+
+// Create either HTTP or HTTPS server so the page can show a health page and we can
+// host a secure WebSocket (wss://) when certificates exist.
+let server;
+if (useTLS) {
+  const options = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+  server = https.createServer(options, (req, res) => {
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<html><head><title>Joint Relay (WSS)</title></head><body style="font-family:Arial,Helvetica,sans-serif;background:#08101a;color:#cbd5e1;">
+        <h2 style="color:#22d3ee">Joint Relay Test Server (WSS enabled)</h2>
+        <p>WebSocket endpoint: <code>wss://${req.headers.host}</code></p>
+        <p>Status: <strong id="status">starting</strong></p>
+        <p>This server accepts secure WebSocket connections and streams test joint frames. Use a WebSocket client or your landing page Relay UI to connect.</p>
+        </body></html>`);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+  });
+} else {
+  server = http.createServer((req, res) => {
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<html><head><title>Joint Relay</title></head><body style="font-family:Arial,Helvetica,sans-serif;background:#08101a;color:#cbd5e1;">
+        <h2 style="color:#22d3ee">Joint Relay Test Server</h2>
+        <p>WebSocket endpoint: <code>ws://localhost:${PORT}</code></p>
+        <p>Status: <strong id="status">starting</strong></p>
+        <p>This server accepts WebSocket connections and streams test joint frames. Use a WebSocket client or your landing page Relay UI to connect.</p>
+        </body></html>`);
+      return;
+    }
+    // Other paths: 404
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+  });
+}
 
 const wss = new WebSocket.Server({ server });
 
-server.listen(PORT, () => {
-  console.log(`Joint relay test server listening on http://localhost:${PORT} and ws://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  if (useTLS) console.log(`Joint relay test server listening on https://0.0.0.0:${PORT} and wss://0.0.0.0:${PORT}`);
+  else console.log(`Joint relay test server listening on http://0.0.0.0:${PORT} and ws://0.0.0.0:${PORT}`);
 });
 
 function makeQuatFromEuler(x,y,z) {
