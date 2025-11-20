@@ -6,7 +6,7 @@
     "passphrase": ""
   },
   "liveServer.settings.port": 5501,
-  "liveServer.settings.host": "0.0.0.0",
+  "liveServer.settings.host": "192.168.1.89",
   "liveServer.settings.useLocalIp": true,
   "liveServer.settings.root": "/A6_vrSocial/public"
 }
