@@ -194,12 +194,19 @@
         }
 
         function setupSocket() {
-            socket = io();
+            const statusEl = document.getElementById('status');
+            if (typeof window === 'undefined' || typeof window.io !== 'function') {
+                console.warn('Socket.io client bundle not found; running in offline mode.');
+                if (statusEl) statusEl.textContent = 'Status: Offline (no realtime server)';
+                return;
+            }
+
+            socket = window.io();
 
             socket.on('connect', () => {
                 myId = socket.id;
                 console.log('Connected with ID:', myId);
-                document.getElementById('status').textContent = 'Status: Connected!';
+                if (statusEl) statusEl.textContent = 'Status: Connected!';
                 
                 // Join room with user metadata
                 socket.emit('joinRoom', currentRoom, { name: myName, color: myColor, style: myStyle, avatarUrl: myAvatarUrl });
@@ -238,7 +245,7 @@
             });
 
             socket.on('disconnect', () => {
-                document.getElementById('status').textContent = 'Status: Disconnected';
+                if (statusEl) statusEl.textContent = 'Status: Disconnected';
             });
         }
 
@@ -393,8 +400,12 @@
             }
             otherUsers = {};
             
-            // Join new room
-            socket.emit('joinRoom', roomName, { name: myName, color: myColor, style: myStyle });
+            // Join new room if realtime server is available
+            if (socket) {
+                socket.emit('joinRoom', roomName, { name: myName, color: myColor, style: myStyle });
+            } else {
+                console.warn('Realtime server unavailable; staying in offline mode.');
+            }
         }
 
         // Initialize when page loads
