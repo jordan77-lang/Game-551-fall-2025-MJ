@@ -6,6 +6,7 @@ var fs = require('fs');
 var path = require('path'),
   express = require('express'),
   db = require('mongoskin').db(dbURL);
+var cors = require('cors');
 
 
 var mongoose = require('mongoose');
@@ -34,6 +35,7 @@ app.use( bodyParser.json() );       // to support JSON-encoded bodies
 app.use(bodyParser.urlencoded({     // to support URL-encoded bodies
   extended:false
 }));
+app.use(cors());
 require('./passport/config/passport')(passport); // pass passport for configuration
 require('./passport/routes.js')(app, passport); // load our routes and pass in our app and fully configured passport
 
@@ -45,6 +47,34 @@ app.get("/addProject", isLoggedIn, function(req,res){
 app.get("/getProjects", function(req,res){
 
 })
+
+const roomsDir = path.join(__dirname, 'public', 'vr-social', 'Rooms');
+app.get('/api/rooms', function(req, res) {
+  try {
+    if (!fs.existsSync(roomsDir)) {
+      return res.json([]);
+    }
+    const entries = fs.readdirSync(roomsDir, { withFileTypes: true });
+    const rooms = [];
+    entries.forEach(entry => {
+      if (!entry.isDirectory()) return;
+      const dir = path.join(roomsDir, entry.name);
+      const files = fs.readdirSync(dir);
+      const sceneFile = files.find(f => /\.gltf$/i.test(f)) || files.find(f => /\.glb$/i.test(f));
+      if (sceneFile) {
+        rooms.push({
+          id: entry.name,
+          name: entry.name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          scene: `Rooms/${entry.name}/${sceneFile}`
+        });
+      }
+    });
+    res.json(rooms);
+  } catch (e) {
+    console.error('Error listing rooms:', e);
+    res.status(500).json({ error: 'failed_to_list_rooms' });
+  }
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 //app.listen(8080);

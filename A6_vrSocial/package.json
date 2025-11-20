@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "https-api": "node server-https.js",
+    "relay": "node tools/joint-relay-server.js",
+    "tunnel": "ngrok start --all"
   },
   "keywords": [
     "vr",

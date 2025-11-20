@@ -1,0 +1,11 @@
+version: "3"
+tunnels:
+  live:
+    addr: 5501
+    proto: http
+  api:
+    addr: 4000
+    proto: http
+  relay:
+    addr: 4444
+    proto: tls
