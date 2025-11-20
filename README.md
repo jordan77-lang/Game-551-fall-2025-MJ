@@ -11,3 +11,5 @@ Scan the QR code below to go to the mobile site:
 <img src="docs/qrcode.png" alt="QR Code" width="200"/>
 
 For Quest and desktop testing over HTTPS, follow the tunnel guide in [`docs/ngrok-setup.md`](docs/ngrok-setup.md).
+
+For production WSS hand tracking, see [`docs/joint-relay.md`](docs/joint-relay.md).

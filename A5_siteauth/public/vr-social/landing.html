@@ -139,7 +139,7 @@
     } catch (e) {}
   }
   const JOINT_RELAY_PORT_DEV = 4444;
-  const JOINT_RELAY_PORT_PROD = 4000;
+  const JOINT_RELAY_PORT_PROD = 4444;
   const JOINT_RELAY_PORT = USE_DEV_API ? JOINT_RELAY_PORT_DEV : JOINT_RELAY_PORT_PROD;
   const JOINT_RELAY_PROTOCOL = locationInfo.protocol === 'https:' ? 'wss' : 'ws';
   const DEFAULT_RELAY_URL = `${JOINT_RELAY_PROTOCOL}://${locationInfo.hostname}:${JOINT_RELAY_PORT}`;

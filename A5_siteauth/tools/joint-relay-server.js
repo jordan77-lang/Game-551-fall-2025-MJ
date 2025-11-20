@@ -8,13 +8,14 @@ const https = require('https');
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const PORT = process.env.JOINT_RELAY_PORT ? parseInt(process.env.JOINT_RELAY_PORT, 10) : 4444;
 
 // If certs exist next to server-https.js or in project root, enable HTTPS/WSS
 const repoRoot = path.join(__dirname, '..');
-const certPath = path.join(repoRoot, 'localhost.pem');
-const keyPath = path.join(repoRoot, 'localhost-key.pem');
+const localhostCertPath = path.join(repoRoot, 'localhost.pem');
+const localhostKeyPath = path.join(repoRoot, 'localhost-key.pem');
 const disableTlsEnv = String(process.env.JOINT_RELAY_FORCE_HTTP || process.env.JOINT_RELAY_DISABLE_TLS || '').trim().toLowerCase();
 const disableTokens = ['1', 'true', 'yes', 'on', 'http'];
 const enableTokens = ['0', 'false', 'no', 'off', 'https'];
@@ -23,17 +24,123 @@ if (disableTlsEnv) {
   disableTls = disableTokens.includes(disableTlsEnv);
   if (enableTokens.includes(disableTlsEnv)) disableTls = false;
 }
-const useTLS = !disableTls && fs.existsSync(certPath) && fs.existsSync(keyPath);
+const tlsOptions = resolveTlsOptions();
+const useTLS = !disableTls && !!tlsOptions;
 
 if (disableTlsEnv) {
   console.log(disableTls ? 'Joint relay TLS disabled via environment override. Serving plain WS.' : 'Joint relay TLS override requested but certificates detected, continuing with HTTPS/WSS.');
+}
+
+if (!useTLS && !disableTls) {
+  console.warn('Joint relay TLS requested but no certificate/key pair was found. Set JOINT_RELAY_CERT_PATH/JOINT_RELAY_KEY_PATH or provide Greenlock certs.');
+}
+
+function resolveTlsOptions() {
+  const inlineCert = (process.env.JOINT_RELAY_CERT_PEM || process.env.JOINT_RELAY_TLS_CERT || '').trim();
+  const inlineKey = (process.env.JOINT_RELAY_KEY_PEM || process.env.JOINT_RELAY_TLS_KEY || '').trim();
+  const inlineCa = (process.env.JOINT_RELAY_CA_PEM || process.env.JOINT_RELAY_TLS_CA || '').trim();
+  if (inlineCert && inlineKey) {
+    return {
+      cert: inlineCert.replace(/\\n/g, '\n'),
+      key: inlineKey.replace(/\\n/g, '\n'),
+      ca: inlineCa ? inlineCa.replace(/\\n/g, '\n') : undefined,
+      __source: 'env-inline'
+    };
+  }
+
+  const explicitCertPath = pickFirstDefined([
+    process.env.JOINT_RELAY_CERT_PATH,
+    process.env.JOINT_RELAY_CERT_FILE,
+    process.env.JOINT_RELAY_TLS_CERT_PATH
+  ]);
+  const explicitKeyPath = pickFirstDefined([
+    process.env.JOINT_RELAY_KEY_PATH,
+    process.env.JOINT_RELAY_KEY_FILE,
+    process.env.JOINT_RELAY_TLS_KEY_PATH
+  ]);
+  const explicitCaPath = pickFirstDefined([
+    process.env.JOINT_RELAY_CHAIN_PATH,
+    process.env.JOINT_RELAY_CA_PATH,
+    process.env.JOINT_RELAY_TLS_CA_PATH
+  ]);
+
+  const candidates = [];
+  if (explicitCertPath && explicitKeyPath) {
+    candidates.push({ certPath: explicitCertPath, keyPath: explicitKeyPath, caPath: explicitCaPath, source: 'env-path' });
+  }
+
+  const domainHints = `${process.env.JOINT_RELAY_DOMAIN || process.env.APPROVE_DOMAINS || process.env.APPROVED_DOMAINS || ''}`
+    .split(',')
+    .map((d) => d.trim())
+    .filter(Boolean);
+  if (!domainHints.length) domainHints.push('jordan77.httpsexample.xyz');
+
+  const searchRoots = Array.from(new Set([
+    process.env.JOINT_RELAY_CERT_DIR,
+    process.env.JOINT_RELAY_GREENLOCK_DIR,
+    process.env.JOINT_RELAY_LETSENCRYPT_DIR,
+    path.join(os.homedir(), '.config', 'greenlock'),
+    path.join(os.homedir(), 'greenlock.d'),
+    path.join(os.homedir(), 'greenlock'),
+    path.join(os.homedir(), 'acme'),
+    '/etc/letsencrypt/live',
+    '/etc/letsencrypt/archive',
+    os.homedir()
+  ].filter(Boolean)));
+
+  const nestedPrefixes = ['live', path.join('config', 'live'), path.join('acme', 'live'), ''];
+  searchRoots.forEach((rootDir) => {
+    domainHints.forEach((domain) => {
+      nestedPrefixes.forEach((prefix) => {
+        const baseDir = prefix ? path.join(rootDir, prefix, domain) : path.join(rootDir, domain);
+        candidates.push({
+          certPath: path.join(baseDir, 'fullchain.pem'),
+          keyPath: path.join(baseDir, 'privkey.pem'),
+          caPath: path.join(baseDir, 'chain.pem'),
+          source: baseDir
+        });
+      });
+    });
+  });
+
+  candidates.push({ certPath: localhostCertPath, keyPath: localhostKeyPath, source: 'repo-localhost' });
+
+  for (const candidate of candidates) {
+    if (!candidate.certPath || !candidate.keyPath) continue;
+    if (!fs.existsSync(candidate.certPath) || !fs.existsSync(candidate.keyPath)) continue;
+    try {
+      const options = {
+        cert: fs.readFileSync(candidate.certPath),
+        key: fs.readFileSync(candidate.keyPath)
+      };
+      if (candidate.caPath && fs.existsSync(candidate.caPath)) {
+        options.ca = fs.readFileSync(candidate.caPath);
+      }
+      if (candidate.source) options.__source = candidate.source;
+      console.log(`Joint relay TLS certificates loaded from ${candidate.source || candidate.certPath}`);
+      return options;
+    } catch (err) {
+      console.warn('Failed to load TLS files from candidate', candidate.source || candidate.certPath, err.message);
+    }
+  }
+  return null;
+}
+
+function pickFirstDefined(values) {
+  if (!Array.isArray(values)) return undefined;
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 // Create either HTTP or HTTPS server so the page can show a health page and we can
 // host a secure WebSocket (wss://) when certificates exist.
 let server;
 if (useTLS) {
-  const options = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+  const { key, cert, ca } = tlsOptions;
+  const options = { key, cert };
+  if (ca) options.ca = ca;
   server = https.createServer(options, (req, res) => {
     if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
