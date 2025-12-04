@@ -550,6 +550,8 @@
   let watchHandCooldown = 0;
   let watchHandHover = null;
   let watchAttachment = null;
+  let watchAttachmentAttempts = 0;
+  const MAX_WATCH_ATTACHMENT_ATTEMPTS = 300;
   let roomsCache = [];
   let leftSqueezeStart = null;
     
@@ -1598,7 +1600,15 @@
         const left = chosen.left;
         const leftHandForMenu = left || controllerGrip1 || controllerGrip2 || null;
         const right = chosen.right || controller2 || null;
-        if (watchPanel) updateWatchPanelTransform(leftHandForMenu);
+        
+        // Keep trying to attach watch panel until successful or max attempts reached
+        if (watchPanel && leftHandForMenu && (!watchAttachment || watchPanel.parent !== watchAttachment)) {
+          if (watchAttachmentAttempts < MAX_WATCH_ATTACHMENT_ATTEMPTS) {
+            updateWatchPanelTransform(leftHandForMenu);
+            watchAttachmentAttempts++;
+          }
+        }
+        
         if (leftHandForMenu && watchPanel) {
           const wrist = left ? getJointWorldPosition(left, 'wrist') : null;
           const indexTip = left ? (getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip')) : null;
@@ -1982,7 +1992,9 @@
       }
       
       if (!attachment) {
-        console.warn('Watch panel: no attachment available (target=', target, 'grips=', controllerGrip1, controllerGrip2, ')');
+        if (watchAttachmentAttempts < 5 || watchAttachmentAttempts % 60 === 0) {
+          console.warn('Watch panel: no attachment available (target=', target, 'has joints?', !!(target && target.joints), 'wrist?', !!(target && target.joints && target.joints['wrist']), 'grips=', controllerGrip1, controllerGrip2, ')');
+        }
         // No valid attachment - keep panel in scene but hidden or at origin
         if (watchPanel.parent && watchPanel.parent !== scene) {
           if (typeof scene.attach === 'function') {
@@ -2006,7 +2018,7 @@
           attachment.add(watchPanel);
           watchAttachment = attachment;
           const attachName = attachment.name || (attachment.inputSource && attachment.inputSource.handedness) || 'wrist-joint';
-          console.log('Watch panel attached to', attachName, attachment);
+          console.log('✓ Watch panel successfully attached to', attachName, 'after', watchAttachmentAttempts, 'attempts');
         } catch (err) {
           console.error('Failed to attach watch panel:', err, attachment);
           scene.add(watchPanel);
@@ -2360,6 +2372,7 @@
           wristCorrection = {};
           lastStableHands = { left: null, right: null };
           watchAttachment = null;
+          watchAttachmentAttempts = 0;
           if (HIDE_AVATAR_HANDS_IN_VR) {
             avatarHandMeshes.forEach(m => { if (m) m.visible = false; });
           }
@@ -2373,10 +2386,6 @@
             try { 
               alignViewerYawToMirror(); 
               updateAvatarInVR(0, true);
-              // Force watch panel reparenting after hands are initialized
-              const chosen = pickHands();
-              const leftForMenu = chosen.left || controllerGrip1 || controllerGrip2;
-              if (leftForMenu && watchPanel) updateWatchPanelTransform(leftForMenu);
             } catch (err) { console.warn('sessionstart delayed setup error', err); } 
           }, 50);
         });
