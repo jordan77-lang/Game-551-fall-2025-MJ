@@ -1976,6 +1976,7 @@
       if (!watchPanel) return;
       const attachment = target || controllerGrip1 || controllerGrip2 || null;
       if (!attachment) {
+        console.warn('Watch panel: no attachment available (target=', target, 'grips=', controllerGrip1, controllerGrip2, ')');
         // No valid attachment - keep panel in scene but hidden or at origin
         if (watchPanel.parent && watchPanel.parent !== scene) {
           if (typeof scene.attach === 'function') {
@@ -1995,9 +1996,17 @@
         if (watchPanel.parent) {
           watchPanel.parent.remove(watchPanel);
         }
-        attachment.add(watchPanel);
-        watchAttachment = attachment;
-        console.log('Watch panel attached to', attachment.name || 'hand/grip');
+        try {
+          attachment.add(watchPanel);
+          watchAttachment = attachment;
+          const attachName = attachment.name || (attachment.inputSource && attachment.inputSource.handedness) || 'unknown';
+          console.log('Watch panel attached to', attachName, attachment);
+        } catch (err) {
+          console.error('Failed to attach watch panel:', err, attachment);
+          scene.add(watchPanel);
+          watchAttachment = null;
+          return;
+        }
       }
       const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
       const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
