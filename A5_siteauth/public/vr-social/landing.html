@@ -549,7 +549,7 @@
   let watchHandCooldown = 0;
   let watchHandHover = null;
   let roomsCache = [];
-  let leftSqueezeStart = 0;
+  let leftSqueezeStart = null;
     
     // VR teleportation offset
     let baseReferenceSpace = null;
@@ -1323,9 +1323,12 @@
       controller1.addEventListener('selectend', onSelectEnd);
       controller1.addEventListener('squeezestart', () => { leftSqueezeStart = performance.now(); });
       controller1.addEventListener('squeezeend', () => {
+        if (leftSqueezeStart === null) return;
         const dt = performance.now() - leftSqueezeStart;
+        leftSqueezeStart = null;
         if (dt > 250) toggleWatchMenu();
       });
+      controller1.addEventListener('squeezecancel', () => { leftSqueezeStart = null; });
       scene.add(controller1);
 
       controllerGrip1 = renderer.xr.getControllerGrip(0);
