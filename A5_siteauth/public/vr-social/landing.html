@@ -558,7 +558,7 @@
   // Debug / tuning parameters (exposed via in-VR panel)
   let rightPinchThreshold = 0.03; // meters
   let pinchThreshold = 0.04; // meters for general pinching
-  let backFacingDotThreshold = -0.25; // dot threshold for back-of-hand detection (dot < threshold means back facing)
+  let backFacingDotThreshold = -0.05; // dot threshold for back-of-hand detection (dot < threshold means back facing)
   let throwScalar = 14; // multiplier for conversion of hand velocity to ball throw
     
   // Hand tracking gesture state
@@ -1887,6 +1887,10 @@
       watchPanel.userData.localOffset = WATCH_LOCAL_OFFSET.clone();
       watchPanel.userData.localQuat = WATCH_LOCAL_QUAT.clone();
       scene.add(watchPanel);
+      if (typeof window !== 'undefined') {
+        window.__landingWatchPanel = watchPanel;
+        window.showWatchMenu = (seconds = 3) => flashWatchMenu(seconds);
+      }
       updateWatchMenuRooms(roomsCache);
     }
 
@@ -1894,7 +1898,24 @@
       if (!watchPanel) return;
       if (!watchPanel.userData) watchPanel.userData = {};
       watchPanel.userData.forceVisible = !watchPanel.userData.forceVisible;
+      watchPanel.userData.autoForce = false;
       watchPanel.visible = !!watchPanel.userData.forceVisible;
+    }
+
+    function flashWatchMenu(seconds = 3) {
+      if (!watchPanel) return;
+      if (!watchPanel.userData) watchPanel.userData = {};
+      watchPanel.userData.forceVisible = true;
+      watchPanel.userData.autoForce = true;
+      watchPanel.visible = true;
+      clearTimeout(watchPanel.userData.autoForceTimer);
+      watchPanel.userData.autoForceTimer = setTimeout(() => {
+        if (!watchPanel || !watchPanel.userData) return;
+        if (!watchPanel.userData.autoForce) return;
+        watchPanel.userData.forceVisible = false;
+        watchPanel.userData.autoForce = false;
+        resetWatchButtonVisuals();
+      }, Math.max(0.5, seconds) * 1000);
     }
 
     function updateWatchMenuRooms(rooms) {
@@ -2303,6 +2324,7 @@
           scene.add(rpmRoot);
           updateAvatarInVR(0, true);
           alignViewerYawToMirror();
+          flashWatchMenu(4);
           setTimeout(() => { try { alignViewerYawToMirror(); updateAvatarInVR(0, true); } catch (err) {} }, 50);
         });
         renderer.xr.addEventListener('sessionend', () => {
