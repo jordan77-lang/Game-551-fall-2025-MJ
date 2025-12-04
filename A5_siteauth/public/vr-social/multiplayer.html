@@ -91,6 +91,29 @@
         let scene, camera, renderer;
         let hand1, hand2;
         let socket;
+        const clock = new THREE.Clock();
+        let handMenu = null;
+        const handMenuButtons = [];
+        const handMenuState = { visible: true };
+        const MENU_TOUCH_THRESHOLD = 0.025;
+        const PINCH_ACTIVATE_THRESHOLD = 0.022;
+        const MENU_PRESS_COOLDOWN = 0.35;
+        const WATCH_LOOK_THRESHOLD = 0.45;
+        let handMenuCooldown = 0;
+        let floorGrid = null;
+        const QUICK_ROOM_SHORTCUTS = [
+            { id: 'room-cube', label: 'Cube', room: 'cube-room', scene: 'Rooms/cube-room/cube-room.gltf' },
+            { id: 'room-camp', label: 'Camp', room: 'camp', scene: 'Rooms/camp/camp.gltf' },
+            { id: 'room-cave', label: 'Cave', room: 'cave', scene: 'Rooms/cave/cave.gltf' }
+        ];
+        const tempVecHandA = new THREE.Vector3();
+        const tempVecHandB = new THREE.Vector3();
+        const tempVecHandC = new THREE.Vector3();
+        const tempVecHandD = new THREE.Vector3();
+        const tempVecHandE = new THREE.Vector3();
+        const tempVecHandF = new THREE.Vector3();
+        const tempVecHandG = new THREE.Vector3();
+        const tempQuaternionHand = new THREE.Quaternion();
     // Read URL params
     const params = new URLSearchParams(window.location.search);
     let currentRoom = params.get('room') || 'lobby';
@@ -288,7 +311,9 @@
 
         function addDefaultEnvironment(){
             const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0x444444);
+            floorGrid = gridHelper;
             scene.add(gridHelper);
+            updateGridButtonLabel();
 
             const planeGeometry = new THREE.PlaneGeometry(20, 20);
             const planeMaterial = new THREE.MeshStandardMaterial({ 
@@ -317,6 +342,7 @@
             hand2 = renderer.xr.getHand(1);
             hand2.add(handModelFactory.createHandModel(hand2, 'mesh'));
             scene.add(hand2);
+            initHandMenu();
         }
 
         function addReferenceCubes() {
@@ -333,7 +359,12 @@
 
         function setupKeyboardControls() {
             window.addEventListener('keydown', (e) => {
-                keys[e.key.toLowerCase()] = true;
+                const key = e.key.toLowerCase();
+                keys[key] = true;
+                if (key === 'm') {
+                    handMenuState.visible = !handMenuState.visible;
+                    if (handMenu) handMenu.visible = handMenuState.visible;
+                }
             });
 
             window.addEventListener('keyup', (e) => {
@@ -365,7 +396,9 @@
         }
 
         function animate() {
+            const delta = clock.getDelta();
             updateMovement();
+            updateHandMenu(delta);
 
             // Throttled hand updates in VR sessions
             const now = performance.now();
@@ -386,6 +419,209 @@
             object3D.getWorldPosition(pos);
             object3D.getWorldQuaternion(quat);
             return { position: { x: pos.x, y: pos.y, z: pos.z }, quaternion: { x: quat.x, y: quat.y, z: quat.z, w: quat.w } };
+        }
+
+        function initHandMenu() {
+            if (!hand1 || handMenu) return;
+            handMenu = new THREE.Group();
+            handMenu.name = 'BackOfHandMenu';
+            handMenu.position.set(0.045, 0.03, -0.03);
+            handMenu.rotation.set(-Math.PI / 2, 0, 0);
+
+            const panel = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.14, 0.2),
+                new THREE.MeshBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.82, side: THREE.DoubleSide })
+            );
+            panel.position.z = -0.002;
+            handMenu.add(panel);
+
+            const defs = [
+                { id: 'respawn', label: 'Respawn' },
+                { id: 'toggle-grid', label: 'Grid OFF' },
+                { id: 'go-lobby', label: 'Lobby' },
+                { id: 'go-landing', label: 'Landing' },
+                ...QUICK_ROOM_SHORTCUTS
+            ];
+
+            const startY = 0.11;
+            const spacing = 0.05;
+            defs.forEach((def, idx) => {
+                const btn = createHandMenuButton(def.label);
+                btn.position.set(0, startY - idx * spacing, 0.001);
+                btn.userData.actionId = def.id;
+                handMenu.add(btn);
+                handMenuButtons.push({ mesh: btn, def, hovered: false });
+            });
+
+            hand1.add(handMenu);
+            updateGridButtonLabel();
+        }
+
+        function createHandMenuButton(label, width = 0.11, height = 0.04) {
+            const geometry = new THREE.PlaneGeometry(width, height);
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 128;
+            const texture = new THREE.CanvasTexture(canvas);
+            if (texture.colorSpace !== undefined) {
+                texture.colorSpace = THREE.SRGBColorSpace;
+            } else {
+                texture.encoding = THREE.sRGBEncoding;
+            }
+            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, color: 0xffffff });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.canvas = canvas;
+            redrawButtonCanvas(mesh, label);
+            return mesh;
+        }
+
+        function redrawButtonCanvas(mesh, label) {
+            const canvas = mesh.userData.canvas;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'rgba(15,23,42,0.9)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 60px "Segoe UI", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+            mesh.material.map.needsUpdate = true;
+        }
+
+        function updateHandMenu(delta) {
+            if (!handMenu) return;
+            if (handMenuCooldown > 0) handMenuCooldown -= delta;
+
+            const inVR = renderer && renderer.xr && renderer.xr.isPresenting;
+            const watchPoseActive = shouldDisplayHandMenu();
+            const visibleNow = inVR && handMenuState.visible && watchPoseActive;
+            handMenu.visible = visibleNow;
+            if (!visibleNow) {
+                handMenuButtons.forEach((entry) => {
+                    entry.mesh.material.color.set(0xffffff);
+                    entry.mesh.scale.setScalar(1);
+                    entry.hovered = false;
+                });
+                return;
+            }
+
+            let hoveredEntry = null;
+            const tip = hand2 && hand2.joints ? hand2.joints['index-finger-tip'] : null;
+            const thumb = hand2 && hand2.joints ? hand2.joints['thumb-tip'] : null;
+            if (!(tip && thumb)) {
+                handMenuButtons.forEach((entry) => {
+                    entry.mesh.material.color.set(0xffffff);
+                    entry.mesh.scale.setScalar(1);
+                });
+                return;
+            }
+
+            tip.getWorldPosition(tempVecHandA);
+            thumb.getWorldPosition(tempVecHandB);
+            const pinching = tempVecHandA.distanceTo(tempVecHandB) < PINCH_ACTIVATE_THRESHOLD;
+
+            handMenuButtons.forEach((entry) => {
+                entry.mesh.getWorldPosition(tempVecHandC);
+                const hovered = tempVecHandA.distanceTo(tempVecHandC) < MENU_TOUCH_THRESHOLD;
+                entry.hovered = hovered;
+                entry.mesh.material.color.set(hovered ? 0x22d3ee : 0xffffff);
+                entry.mesh.scale.setScalar(hovered ? 1.05 : 1);
+                if (hovered) hoveredEntry = entry;
+            });
+
+            if (hoveredEntry && pinching && handMenuCooldown <= 0) {
+                handMenuCooldown = MENU_PRESS_COOLDOWN;
+                triggerHandMenuAction(hoveredEntry.def.id);
+            }
+        }
+
+        function shouldDisplayHandMenu() {
+            if (!handMenu) return false;
+            if (!(renderer && renderer.xr && renderer.xr.isPresenting)) return false;
+            handMenu.getWorldQuaternion(tempQuaternionHand);
+            const menuNormal = tempVecHandD.set(0, 0, 1).applyQuaternion(tempQuaternionHand).normalize();
+            handMenu.getWorldPosition(tempVecHandE);
+            camera.getWorldPosition(tempVecHandF);
+            const toCamera = tempVecHandF.sub(tempVecHandE).normalize();
+            return menuNormal.dot(toCamera) > WATCH_LOOK_THRESHOLD;
+        }
+
+        function triggerHandMenuAction(actionId) {
+            switch (actionId) {
+                case 'respawn':
+                    respawnPlayer();
+                    break;
+                case 'toggle-grid':
+                    toggleGridHelperVisibility();
+                    break;
+                case 'go-lobby':
+                    goToLobbyFromMenu();
+                    break;
+                case 'go-landing':
+                    goToLandingFromMenu();
+                    break;
+                default:
+                    if (actionId && actionId.startsWith('room-')) {
+                        goToQuickRoom(actionId);
+                    }
+                    break;
+            }
+        }
+
+        function respawnPlayer() {
+            const bounds = scene && scene.userData && scene.userData.roomBounds;
+            if (bounds) {
+                const cx = (bounds.min.x + bounds.max.x) * 0.5;
+                const cz = (bounds.min.z + bounds.max.z) * 0.5;
+                const minY = bounds.min.y || 0;
+                camera.position.set(cx, Math.max(1.6, minY + 1.6), cz);
+            } else {
+                camera.position.set(0, 1.6, 3);
+            }
+            camera.rotation.set(0, 0, 0);
+        }
+
+        function toggleGridHelperVisibility() {
+            if (!floorGrid) {
+                floorGrid = new THREE.GridHelper(20, 20, 0x888888, 0x444444);
+                scene.add(floorGrid);
+            }
+            floorGrid.visible = !floorGrid.visible;
+            updateGridButtonLabel();
+        }
+
+        function updateGridButtonLabel() {
+            const label = floorGrid && floorGrid.visible ? 'Grid ON' : 'Grid OFF';
+            updateHandMenuButtonLabel('toggle-grid', label);
+        }
+
+        function updateHandMenuButtonLabel(actionId, text) {
+            const entry = handMenuButtons.find((btn) => btn.def.id === actionId);
+            if (!entry) return;
+            redrawButtonCanvas(entry.mesh, text);
+        }
+
+        function goToLobbyFromMenu() {
+            navigateToRoom('cube-room', 'Rooms/cube-room/cube-room.gltf');
+        }
+
+        function goToLandingFromMenu() {
+            window.location.href = 'landing.html';
+        }
+
+        function goToQuickRoom(actionId) {
+            const shortcut = QUICK_ROOM_SHORTCUTS.find((entry) => entry.id === actionId);
+            if (!shortcut) return;
+            navigateToRoom(shortcut.room, shortcut.scene);
+        }
+
+        function navigateToRoom(roomId, scenePath) {
+            const target = new URL(window.location.href);
+            target.searchParams.set('room', roomId);
+            if (scenePath) target.searchParams.set('scene', scenePath);
+            window.location.href = target.toString();
         }
 
         // Global function for room joining
