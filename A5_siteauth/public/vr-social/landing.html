@@ -541,6 +541,7 @@
   const WATCH_TOUCH_THRESHOLD = 0.025;
   const WATCH_PINCH_THRESHOLD = 0.022;
   const WATCH_PRESS_COOLDOWN = 0.35;
+  const WATCH_TOGGLE_HOLD_MS = 600;
   const WATCH_POINTER_POS = new THREE.Vector3();
   const WATCH_BUTTON_POS = new THREE.Vector3();
   const WATCH_WORLD_POS = new THREE.Vector3();
@@ -548,6 +549,7 @@
   const WATCH_WORLD_QUAT = new THREE.Quaternion();
   let watchHandCooldown = 0;
   let watchHandHover = null;
+  let watchAttachment = null;
   let roomsCache = [];
   let leftSqueezeStart = null;
     
@@ -1326,7 +1328,7 @@
         if (leftSqueezeStart === null) return;
         const dt = performance.now() - leftSqueezeStart;
         leftSqueezeStart = null;
-        if (dt > 250) toggleWatchMenu();
+        if (dt > WATCH_TOGGLE_HOLD_MS) toggleWatchMenu();
       });
       controller1.addEventListener('squeezecancel', () => { leftSqueezeStart = null; });
       scene.add(controller1);
@@ -1972,15 +1974,24 @@
 
     function updateWatchPanelTransform(target) {
       if (!watchPanel) return;
-      const attachment = target || controllerGrip1 || controllerGrip2;
-      if (!attachment) return;
+      const attachment = target || controllerGrip1 || controllerGrip2 || null;
+      if (!attachment) {
+        if (watchPanel.parent && watchPanel.parent !== scene && typeof scene.attach === 'function') {
+          scene.attach(watchPanel);
+        } else if (!watchPanel.parent) {
+          scene.add(watchPanel);
+        }
+        watchAttachment = null;
+        return;
+      }
+      if (watchAttachment !== attachment) {
+        attachment.add(watchPanel);
+        watchAttachment = attachment;
+      }
       const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
       const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
-      attachment.getWorldPosition(WATCH_WORLD_POS);
-      attachment.getWorldQuaternion(WATCH_WORLD_QUAT);
-      WATCH_WORLD_OFFSET.copy(localOffset).applyQuaternion(WATCH_WORLD_QUAT);
-      watchPanel.position.copy(WATCH_WORLD_POS).add(WATCH_WORLD_OFFSET);
-      watchPanel.quaternion.copy(WATCH_WORLD_QUAT).multiply(localQuat);
+      watchPanel.position.copy(localOffset);
+      watchPanel.quaternion.copy(localQuat);
     }
 
     function resetWatchButtonVisuals() {
