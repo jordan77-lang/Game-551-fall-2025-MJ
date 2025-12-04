@@ -1588,24 +1588,30 @@
       try {
         const chosen = pickHands();
         const left = chosen.left;
-        const right = chosen.right;
-        if (watchPanel) ensureWatchPanelAttachment(left);
-        if (left && watchPanel) {
-          const wrist = getJointWorldPosition(left, 'wrist');
-          const indexTip = getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip');
+        const leftHandForMenu = left || controllerGrip1 || controllerGrip2 || null;
+        const right = chosen.right || controller2 || null;
+        if (watchPanel) ensureWatchPanelAttachment(leftHandForMenu);
+        if (leftHandForMenu && watchPanel) {
+          const wrist = left ? getJointWorldPosition(left, 'wrist') : null;
+          const indexTip = left ? (getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip')) : null;
+          const forceVisible = watchPanel.userData && watchPanel.userData.forceVisible;
           if (wrist && indexTip) {
             const palmDir = indexTip.clone().sub(wrist).normalize();
             const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
             const toCam = camPos.clone().sub(wrist).normalize();
             const dot = palmDir.dot(toCam);
             const backFacing = dot < backFacingDotThreshold;
-            const forceVisible = watchPanel.userData && watchPanel.userData.forceVisible;
             if (backFacing || forceVisible) {
               watchPanel.visible = true;
             } else {
               watchPanel.visible = false;
               resetWatchButtonVisuals();
             }
+          } else if (forceVisible) {
+            watchPanel.visible = true;
+          } else {
+            watchPanel.visible = false;
+            resetWatchButtonVisuals();
           }
         } else if (watchPanel && !(watchPanel.userData && watchPanel.userData.forceVisible)) {
           watchPanel.visible = false;
@@ -1968,8 +1974,11 @@
         }
         return;
       }
-      if (watchPanel.parent !== targetHand) {
-        targetHand.add(watchPanel);
+      const fallbackGrip = controllerGrip1 || controllerGrip2 || null;
+      const attachTarget = targetHand || fallbackGrip || null;
+      if (!attachTarget) return;
+      if (watchPanel.parent !== attachTarget) {
+        attachTarget.add(watchPanel);
       }
       const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
       const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
