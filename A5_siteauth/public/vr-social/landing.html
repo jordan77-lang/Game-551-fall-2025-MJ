@@ -1974,7 +1974,13 @@
 
     function updateWatchPanelTransform(target) {
       if (!watchPanel) return;
-      const attachment = target || controllerGrip1 || controllerGrip2 || null;
+      let attachment = target || controllerGrip1 || controllerGrip2 || null;
+      
+      // If target is a hand with joints, try to attach to wrist joint specifically
+      if (target && target.joints && target.joints['wrist']) {
+        attachment = target.joints['wrist'];
+      }
+      
       if (!attachment) {
         console.warn('Watch panel: no attachment available (target=', target, 'grips=', controllerGrip1, controllerGrip2, ')');
         // No valid attachment - keep panel in scene but hidden or at origin
@@ -1999,7 +2005,7 @@
         try {
           attachment.add(watchPanel);
           watchAttachment = attachment;
-          const attachName = attachment.name || (attachment.inputSource && attachment.inputSource.handedness) || 'unknown';
+          const attachName = attachment.name || (attachment.inputSource && attachment.inputSource.handedness) || 'wrist-joint';
           console.log('Watch panel attached to', attachName, attachment);
         } catch (err) {
           console.error('Failed to attach watch panel:', err, attachment);
