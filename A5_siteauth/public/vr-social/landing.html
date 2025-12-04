@@ -1900,7 +1900,7 @@
       if (!watchPanel.userData) watchPanel.userData = {};
       watchPanel.userData.localOffset = WATCH_LOCAL_OFFSET.clone();
       watchPanel.userData.localQuat = WATCH_LOCAL_QUAT.clone();
-      scene.add(watchPanel);
+      // Don't add to scene yet - let updateWatchPanelTransform handle parenting
       if (typeof window !== 'undefined') {
         window.__landingWatchPanel = watchPanel;
         window.showWatchMenu = (seconds = 3) => flashWatchMenu(seconds);
@@ -1976,17 +1976,28 @@
       if (!watchPanel) return;
       const attachment = target || controllerGrip1 || controllerGrip2 || null;
       if (!attachment) {
-        if (watchPanel.parent && watchPanel.parent !== scene && typeof scene.attach === 'function') {
-          scene.attach(watchPanel);
+        // No valid attachment - keep panel in scene but hidden or at origin
+        if (watchPanel.parent && watchPanel.parent !== scene) {
+          if (typeof scene.attach === 'function') {
+            scene.attach(watchPanel);
+          } else {
+            watchPanel.parent.remove(watchPanel);
+            scene.add(watchPanel);
+          }
         } else if (!watchPanel.parent) {
           scene.add(watchPanel);
         }
         watchAttachment = null;
         return;
       }
-      if (watchAttachment !== attachment) {
+      // Reparent to the attachment if it changed
+      if (watchAttachment !== attachment || watchPanel.parent !== attachment) {
+        if (watchPanel.parent) {
+          watchPanel.parent.remove(watchPanel);
+        }
         attachment.add(watchPanel);
         watchAttachment = attachment;
+        console.log('Watch panel attached to', attachment.name || 'hand/grip');
       }
       const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
       const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
@@ -2333,6 +2344,7 @@
           headCorrection.quat.identity();
           wristCorrection = {};
           lastStableHands = { left: null, right: null };
+          watchAttachment = null;
           if (HIDE_AVATAR_HANDS_IN_VR) {
             avatarHandMeshes.forEach(m => { if (m) m.visible = false; });
           }
@@ -2342,7 +2354,16 @@
           updateAvatarInVR(0, true);
           alignViewerYawToMirror();
           flashWatchMenu(4);
-          setTimeout(() => { try { alignViewerYawToMirror(); updateAvatarInVR(0, true); } catch (err) {} }, 50);
+          setTimeout(() => { 
+            try { 
+              alignViewerYawToMirror(); 
+              updateAvatarInVR(0, true);
+              // Force watch panel reparenting after hands are initialized
+              const chosen = pickHands();
+              const leftForMenu = chosen.left || controllerGrip1 || controllerGrip2;
+              if (leftForMenu && watchPanel) updateWatchPanelTransform(leftForMenu);
+            } catch (err) { console.warn('sessionstart delayed setup error', err); } 
+          }, 50);
         });
         renderer.xr.addEventListener('sessionend', () => {
           vrAnchorPos = null;
