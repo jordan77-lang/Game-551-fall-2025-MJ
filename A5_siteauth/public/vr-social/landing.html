@@ -543,6 +543,9 @@
   const WATCH_PRESS_COOLDOWN = 0.35;
   const WATCH_POINTER_POS = new THREE.Vector3();
   const WATCH_BUTTON_POS = new THREE.Vector3();
+  const WATCH_WORLD_POS = new THREE.Vector3();
+  const WATCH_WORLD_OFFSET = new THREE.Vector3();
+  const WATCH_WORLD_QUAT = new THREE.Quaternion();
   let watchHandCooldown = 0;
   let watchHandHover = null;
   let roomsCache = [];
@@ -1590,7 +1593,7 @@
         const left = chosen.left;
         const leftHandForMenu = left || controllerGrip1 || controllerGrip2 || null;
         const right = chosen.right || controller2 || null;
-        if (watchPanel) ensureWatchPanelAttachment(leftHandForMenu);
+        if (watchPanel) updateWatchPanelTransform(leftHandForMenu);
         if (leftHandForMenu && watchPanel) {
           const wrist = left ? getJointWorldPosition(left, 'wrist') : null;
           const indexTip = left ? (getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip')) : null;
@@ -1964,26 +1967,17 @@
       resetWatchButtonVisuals();
     }
 
-    function ensureWatchPanelAttachment(targetHand) {
+    function updateWatchPanelTransform(target) {
       if (!watchPanel) return;
-      if (!targetHand) {
-        if (watchPanel.parent && watchPanel.parent !== scene) {
-          scene.add(watchPanel);
-          watchPanel.position.copy(WATCH_LOCAL_OFFSET);
-          watchPanel.quaternion.copy(WATCH_LOCAL_QUAT);
-        }
-        return;
-      }
-      const fallbackGrip = controllerGrip1 || controllerGrip2 || null;
-      const attachTarget = targetHand || fallbackGrip || null;
-      if (!attachTarget) return;
-      if (watchPanel.parent !== attachTarget) {
-        attachTarget.add(watchPanel);
-      }
+      const attachment = target || controllerGrip1 || controllerGrip2;
+      if (!attachment) return;
       const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
       const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
-      watchPanel.position.copy(localOffset);
-      watchPanel.quaternion.copy(localQuat);
+      attachment.getWorldPosition(WATCH_WORLD_POS);
+      attachment.getWorldQuaternion(WATCH_WORLD_QUAT);
+      WATCH_WORLD_OFFSET.copy(localOffset).applyQuaternion(WATCH_WORLD_QUAT);
+      watchPanel.position.copy(WATCH_WORLD_POS).add(WATCH_WORLD_OFFSET);
+      watchPanel.quaternion.copy(WATCH_WORLD_QUAT).multiply(localQuat);
     }
 
     function resetWatchButtonVisuals() {
