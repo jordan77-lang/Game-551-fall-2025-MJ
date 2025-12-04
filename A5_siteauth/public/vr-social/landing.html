@@ -536,6 +536,15 @@
   let watchPanel = null;
   let mirrorReflector = null;
     let watchButtons = [];
+  const WATCH_LOCAL_OFFSET = new THREE.Vector3(0.045, 0.025, -0.03);
+  const WATCH_LOCAL_QUAT = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  const WATCH_TOUCH_THRESHOLD = 0.025;
+  const WATCH_PINCH_THRESHOLD = 0.022;
+  const WATCH_PRESS_COOLDOWN = 0.35;
+  const WATCH_POINTER_POS = new THREE.Vector3();
+  const WATCH_BUTTON_POS = new THREE.Vector3();
+  let watchHandCooldown = 0;
+  let watchHandHover = null;
   let roomsCache = [];
   let leftSqueezeStart = 0;
     
@@ -1069,6 +1078,7 @@
 
       renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
+        watchHandCooldown = Math.max(0, watchHandCooldown - delta);
         if (mixer) mixer.update(delta);
         updateMovement();
         updatePhysics();
@@ -1578,48 +1588,30 @@
       try {
         const chosen = pickHands();
         const left = chosen.left;
+        const right = chosen.right;
+        if (watchPanel) ensureWatchPanelAttachment(left);
         if (left && watchPanel) {
-          // get wrist and palm normal approximation: use index-finger-knuckle and wrist
           const wrist = getJointWorldPosition(left, 'wrist');
           const indexTip = getJointWorldPosition(left, 'index-finger-tip') || getJointWorldPosition(left, 'indexfingertip');
           if (wrist && indexTip) {
-            const palmDir = indexTip.clone().sub(wrist).normalize(); // approximate forward of hand
-            // Vector from hand to camera
+            const palmDir = indexTip.clone().sub(wrist).normalize();
             const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
             const toCam = camPos.clone().sub(wrist).normalize();
-            // if palmDir dot toCam < threshold means back of hand facing camera
             const dot = palmDir.dot(toCam);
             const backFacing = dot < backFacingDotThreshold;
-            if (backFacing) {
-              // show and orient watchPanel to face camera
+            const forceVisible = watchPanel.userData && watchPanel.userData.forceVisible;
+            if (backFacing || forceVisible) {
               watchPanel.visible = true;
-              // choose left controller grip to attach/orient panel near
-              let leftGrip = controllerGrip1 || controllerGrip2 || null;
-              try {
-                const g1 = controllerGrip1 ? controllerGrip1.getWorldPosition(new THREE.Vector3()) : null;
-                const g2 = controllerGrip2 ? controllerGrip2.getWorldPosition(new THREE.Vector3()) : null;
-                const cam = new THREE.Vector3(); camera.getWorldPosition(cam);
-                if (g1 && g2) {
-                  leftGrip = (g1.x < g2.x) ? controllerGrip1 : controllerGrip2;
-                } else if (g1) {
-                  leftGrip = controllerGrip1;
-                } else if (g2) {
-                  leftGrip = controllerGrip2;
-                }
-              } catch (e) {}
-              if (leftGrip) {
-                const worldPos = new THREE.Vector3(); leftGrip.getWorldPosition(worldPos);
-                const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
-                const look = camPos.clone().sub(worldPos).normalize();
-                const yaw = Math.atan2(look.x, look.z);
-                watchPanel.rotation.set(0, -yaw, 0);
-                // keep panel attached to original parent (controllerGrip1) but positioned via its local offset
-              }
             } else {
-              if (!watchPanel.userData.forceVisible) watchPanel.visible = false;
+              watchPanel.visible = false;
+              resetWatchButtonVisuals();
             }
           }
+        } else if (watchPanel && !(watchPanel.userData && watchPanel.userData.forceVisible)) {
+          watchPanel.visible = false;
+          resetWatchButtonVisuals();
         }
+        handleHandWatchInteraction(right);
       } catch (e) { /* ignore */ }
     }
 
@@ -1650,29 +1642,7 @@
       // If watch menu visible, allow selecting buttons with right controller
       if (watchPanel && watchPanel.visible && isRight && watchButtons.length) {
         const hit = intersectWatchButtons(controller);
-        if (hit && hit.userData) {
-          if (hit.userData.room) {
-            const r = hit.userData.room;
-            goTo(r.id, r.scene);
-            return;
-          }
-          if (hit.userData.leave) {
-            // End XR session if available
-            try {
-              const sess = renderer.xr.getSession && renderer.xr.getSession();
-              if (sess) sess.end();
-            } catch (e) { console.warn('Failed to end XR session', e); }
-            return;
-          }
-          if (hit.userData.debug) {
-            makeDebugPanel();
-            if (debugPanel) {
-              debugPanel.visible = !debugPanel.visible;
-              if (debugPanel.visible) refreshDebugPanelTexture();
-            }
-            return;
-          }
-        }
+        if (handleWatchButtonAction(hit)) return;
       }
 
       // Try to grab ball (use world positions)
@@ -1911,25 +1881,20 @@
       const mat = new THREE.MeshBasicMaterial({ map: makeButtonTexture('Rooms'), transparent: true });
       watchPanel = new THREE.Mesh(panelGeo, mat);
       watchPanel.visible = false;
-      // Place at left wrist area (attach to wrist grip) but we will orient it dynamically
-      watchPanel.position.set(0.08, 0.02, 0);
-      watchPanel.rotation.y = -Math.PI / 2;
-      // pick left grip if available
-      let leftGrip = controllerGrip1 || null;
-      try {
-        if (controllerGrip1 && controllerGrip2) {
-          const p1 = controllerGrip1.getWorldPosition(new THREE.Vector3());
-          const p2 = controllerGrip2.getWorldPosition(new THREE.Vector3());
-          leftGrip = (p1.x < p2.x) ? controllerGrip1 : controllerGrip2;
-        }
-      } catch (e) { /* ignore */ }
-      if (leftGrip) leftGrip.add(watchPanel);
+      watchPanel.position.copy(WATCH_LOCAL_OFFSET);
+      watchPanel.quaternion.copy(WATCH_LOCAL_QUAT);
+      if (!watchPanel.userData) watchPanel.userData = {};
+      watchPanel.userData.localOffset = WATCH_LOCAL_OFFSET.clone();
+      watchPanel.userData.localQuat = WATCH_LOCAL_QUAT.clone();
+      scene.add(watchPanel);
       updateWatchMenuRooms(roomsCache);
     }
 
     function toggleWatchMenu() {
       if (!watchPanel) return;
-      watchPanel.visible = !watchPanel.visible;
+      if (!watchPanel.userData) watchPanel.userData = {};
+      watchPanel.userData.forceVisible = !watchPanel.userData.forceVisible;
+      watchPanel.visible = !!watchPanel.userData.forceVisible;
     }
 
     function updateWatchMenuRooms(rooms) {
@@ -1969,6 +1934,88 @@
       debugBtn.userData.debug = true;
       watchPanel.add(debugBtn);
       watchButtons.push(debugBtn);
+      resetWatchButtonVisuals();
+    }
+
+    function ensureWatchPanelAttachment(targetHand) {
+      if (!watchPanel) return;
+      if (!targetHand) {
+        if (watchPanel.parent && watchPanel.parent !== scene) {
+          scene.add(watchPanel);
+          watchPanel.position.copy(WATCH_LOCAL_OFFSET);
+          watchPanel.quaternion.copy(WATCH_LOCAL_QUAT);
+        }
+        return;
+      }
+      if (watchPanel.parent !== targetHand) {
+        targetHand.add(watchPanel);
+      }
+      const localOffset = (watchPanel.userData && watchPanel.userData.localOffset) || WATCH_LOCAL_OFFSET;
+      const localQuat = (watchPanel.userData && watchPanel.userData.localQuat) || WATCH_LOCAL_QUAT;
+      watchPanel.position.copy(localOffset);
+      watchPanel.quaternion.copy(localQuat);
+    }
+
+    function resetWatchButtonVisuals() {
+      watchHandHover = null;
+      watchButtons.forEach((btn) => {
+        if (!btn) return;
+        btn.scale.set(1, 1, 1);
+      });
+    }
+
+    function handleHandWatchInteraction(rightHand) {
+      if (!watchPanel || !watchPanel.visible || !watchButtons.length) {
+        resetWatchButtonVisuals();
+        return;
+      }
+      if (!rightHand) {
+        resetWatchButtonVisuals();
+        return;
+      }
+      const tipRaw = getJointWorldPosition(rightHand, 'index-finger-tip') || getJointWorldPosition(rightHand, 'indexfingertip');
+      if (!tipRaw) {
+        resetWatchButtonVisuals();
+        return;
+      }
+      const tip = WATCH_POINTER_POS.copy(tipRaw);
+      watchHandHover = null;
+      watchButtons.forEach((btn) => {
+        if (!btn) return;
+        btn.getWorldPosition(WATCH_BUTTON_POS);
+        const hovered = WATCH_BUTTON_POS.distanceTo(tip) < WATCH_TOUCH_THRESHOLD;
+        btn.scale.set(hovered ? 1.08 : 1, hovered ? 1.08 : 1, 1);
+        if (hovered) watchHandHover = btn;
+      });
+      if (watchHandHover && watchHandCooldown <= 0 && isPinching(rightHand, WATCH_PINCH_THRESHOLD)) {
+        watchHandCooldown = WATCH_PRESS_COOLDOWN;
+        handleWatchButtonAction(watchHandHover);
+      }
+    }
+
+    function handleWatchButtonAction(target) {
+      if (!target || !target.userData) return false;
+      const data = target.userData;
+      if (data.room) {
+        goTo(data.room.id, data.room.scene);
+        return true;
+      }
+      if (data.leave) {
+        try {
+          const sess = renderer.xr.getSession && renderer.xr.getSession();
+          if (sess) sess.end();
+        } catch (e) { console.warn('Failed to end XR session', e); }
+        return true;
+      }
+      if (data.debug) {
+        makeDebugPanel();
+        if (debugPanel) {
+          debugPanel.visible = !debugPanel.visible;
+          if (debugPanel.visible) refreshDebugPanelTexture();
+        }
+        return true;
+      }
+      return false;
     }
 
     // Debug panel (floating) and interactive buttons
